@@ -1,0 +1,5 @@
+# 超大文件：单文件超 GitHub 100MB 硬限制，且可由脚本重新下载 / 重新训练得到
+文本张量表示/data/fil9
+文本张量表示/data/ai20ag
+文本张量表示/model/CBOW_model.bin
+文本张量表示/model/SkipGram_model.bin
