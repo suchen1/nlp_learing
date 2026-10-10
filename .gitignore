@@ -3,3 +3,6 @@
 文本张量表示/data/ai20ag
 文本张量表示/model/CBOW_model.bin
 文本张量表示/model/SkipGram_model.bin
+
+# TensorBoard 事件文件（生成物，会一直长）
+runs/

@@ -18,7 +18,7 @@
 | --- | --- | --- | --- |
 | 导学 | 课程导学 | P1 | ✅ 已完成 |
 | Day01 | 文本预处理：分词 / 词性标注 / NER / one-hot / CBOW | P2–P17 | ✅ 已完成 |
-| Day02 | 词向量与文本分析 | P18–P35 | ⬜ 未开始 |
+| Day02 | 词向量与文本分析 | P18–P35 | 🟡 进行中（已到 P24 WordEmbedding） |
 | Day03 | 文本规范 + RNN / LSTM / GRU | P36–P54 | ⬜ 未开始 |
 | Day04 | 人名分类案例实战 | P55–P65 | ⬜ 未开始 |
 | Day05 | 注意力机制 | P66–P79 | ⬜ 未开始 |
@@ -114,6 +114,77 @@
 - 学习率**随进度线性衰减**（0.025 → 0.0001）：轮数给太少 = 还没退火完就停了
 - 原版 C 实现的两个细节：**dynamic window**（每步的窗口在 `[1, window]` 里随机取，越近的词越常当上下文）、**subsampling**（高频词按概率直接丢掉）
 
+### Day02 词向量与 WordEmbedding（P18–P25）
+
+> 当前进度：Day02 进行中，已到 **P24 WordEmbedding 获取词向量**。下一个是 **P25 WordEmbedding 查看词向量的相似性**。
+
+#### 1. FastText 实操（P19–P22）→ `文本张量表示/02_CBOW和skiggram.py`
+
+- 环境：**`fasttext-wheel 0.9.2`**（官方 `fasttext` 在 Windows 上常要现场编译，`fasttext-wheel` 直接给轮子）
+- 一句话训练：
+
+  ```python
+  model = fasttext.train_unsupervised(input='./data/ai20ag', model='cbow',
+                                      epoch=10, lr=0.1, dim=100, ws=5, minCount=1)
+  ```
+
+  - `model='cbow'` / `'skipgram'` 就是两种词向量模型
+  - `dim` 向量维度、`ws` 窗口、`epoch` 轮数、`lr` 学习率、`minCount` 最小词频
+- 保存 / 加载：`model.save_model('./model/xxx.bin')` ｜ `fasttext.load_model('./model/xxx.bin')`
+- 效果检验：`model.get_word_vector('money')`（拿到向量）、`model.get_nearest_neighbors('dog')`（找近邻词）
+- ⚠ 两个 `.bin` 各 **972 MB**（dim=100 × 词表），属于**训练产物**，不要提交 git
+
+#### 2. `nn.Embedding` 的本质：一张"可训练的查表"
+
+- `nn.Embedding(num_embeddings=V, embedding_dim=N)` 内部就是一个 `(V, N)` 矩阵 `weight`
+- 前向传入**整数下标**，等价于 `weight[idx]`；数学上等价于 `one-hot × W`，实现上**直接查行**（稀疏、高效）
+- `embedding_dim=8` 是"每个词用 8 个数表示"（不是 8 个词），整表形状 `(V, 8)`
+
+#### 3. 最容易出错的地方：词表编号 1-based ↔ Embedding 行号 0-based
+
+| 对比项 | 起点 | 说明 |
+| --- | --- | --- |
+| `tokenizer.word_index` | **1** | 0 号不用。Keras 源码原话：`note that index 0 is reserved, never assigned to an existing word` |
+| `nn.Embedding` 的行号 | **0** | 0 就是普通一行，不会自动变成 padding |
+
+- 所以必须写 `num_embeddings = len(tokenizer.word_index) + 1`，那个 `+1` 就是**给 0 号腾预留位**；不写的话编号最大的词没有对应的行，一取就报 `IndexError: index out of range in self`
+- 23 个词 → 矩阵是 **24 行**（"词表大小" = 24，不是 23）
+- 看到的"词 1 显示在第 2 行"是**人眼从 1 数行、tensor 从 0 数行**造成的，不是错位
+- 预留行在没用 padding 前**梯度恒为 0**（实测 `grad[0] = 0.0`，优化器走一步也不动），但它不是冗余：
+  - `pad_sequences` 补齐时补的就是 **0**（实测 `[[1,2,3],[4,5]]` → `[[1,2,3],[4,5,0]]`）
+  - `padding_idx=0` 会把它**初始化成全 0 并永久锁死梯度**（即使真的喂 0 进去也不更新）
+- Keras 已经建好反向表 `tokenizer.index_word`（`{1: '学习', 2: '深度', ...}`），需要"编号 → 词"时直接用它
+
+#### 4. TensorBoard 词向量可视化（P24）
+
+```python
+from torch.utils.tensorboard import SummaryWriter
+
+my_summary = SummaryWriter(log_dir=r'D:\ML_Project\nlp\runs')   # ⚠ 必须是全英文路径
+my_summary.add_embedding(embd.weight,
+                         metadata=['<PAD>'] + list(tokenizer.word_index.keys()),
+                         tag='word_embedding')
+my_summary.close()
+```
+
+- `SummaryWriter` **不画图，只往磁盘写事件文件**；画图的是 TensorBoard —— 一个独立的本地网页应用（`localhost:6006`）
+- `add_embedding(mat, metadata, tag)` 三个参数：
+  - `mat`：`(N, D)` 的向量矩阵（这里是 `(24, 8)`，N 个点、每个 D 维）
+  - `metadata`：**每个点一个标签**，第 i 个标签对应矩阵第 i 行
+  - `tag`：这组嵌入在界面里的名字（可以写多组做对比）
+  - TensorBoard 用 **PCA / t-SNE / UMAP** 把 D 维降到 3 维，画成可旋转的散点图，语义相近的词会聚成簇
+- 落盘产物（实测）：`events.out.tfevents.*`、`projector_config.pbtxt`、`00000/word_embedding/metadata.tsv`、`tensors.tsv`
+- ⚠ **metadata 个数必须等于行数**，否则 `AssertionError: #labels should equal with #data points`（24 行 vs 23 个词，所以要 `['<PAD>'] +`）
+- ⚠ **metadata 的"顺序"靠不住**：`list(word_index.keys())` 恰好对，是因为 Keras 用 `dict(zip(排好序的词表, 1..N))` 构造、而 dict 保留插入顺序。一旦插入顺序和编号顺序分叉（重新排过、从 JSON 读回来），它会**静默贴错标签**（实测 24 个标签错 22 个，且一行错都不报）。稳妥写法是按编号回填：
+
+  ```python
+  metadata = [tokenizer.index_word.get(i, '<PAD>')
+              for i in range(len(tokenizer.word_index) + 1)]
+  ```
+
+- 启动：`tensorboard --logdir=D:\ML_Project\nlp\runs` → 浏览器 `http://localhost:6006` → 顶栏切到 **PROJECTOR**
+- ⚠ 现在展示的是**随机初始化**的词向量（还没训练），图上一团乱麻；要训练之后再看才有聚类意义
+
 ## 环境
 
 | 项 | 版本 / 说明 |
@@ -122,9 +193,13 @@
 | 项目环境 | **`nlpbase`**（conda）｜`D:\Anaconda3\envs\nlpbase\python.exe` |
 | Python | 3.10.21（conda-forge） |
 | TensorFlow | **2.19.0**（Day01 的 one-hot 用的是 `tensorflow.keras` 的 Tokenizer） |
+| PyTorch | **2.14.0+cu130**（GPU 版，2026-10-10 装入；配套 `torchvision 0.29.0+cu130`） |
+| TensorBoard | 2.19.0（随 TensorFlow 装，词向量可视化用） |
+| fastText | **fasttext-wheel 0.9.2**（Windows 上免编译） |
 | NumPy | 2.1.3 |
 | jieba | 0.42.1 |
 | joblib | 1.5.1（保存 / 加载 tokenizer） |
+| setuptools | 81.0.0（⚠ 见踩坑记录 4：新版移除了 `pkg_resources`，会让 TensorBoard 起不来） |
 | IDE | PyCharm 2026.1（`.idea/` 随项目） |
 
 > **为什么单独开一个环境**：上一个深度学习项目用的 `base`（`C:\ProgramData\anaconda3`，Python 3.14.6 + torch 2.14.0+cu130）
@@ -135,25 +210,22 @@
 
 ### 依赖现状（2026 年排查，基于 `nlpbase`）
 
-**已装**：`tensorflow 2.19.0`、`numpy 2.1.3`、`jieba 0.42.1`、`joblib 1.5.1`
+**已装**：`tensorflow 2.19.0`、`torch 2.14.0+cu130`、`torchvision 0.29.0+cu130`、`tensorboard 2.19.0`、`fasttext-wheel 0.9.2`、`numpy 2.1.3`、`jieba 0.42.1`、`joblib 1.5.1`
 
 课程接下来会用到、目前**还没装**：
 
 | 依赖 | 从哪里开始需要 | 备注 |
 | --- | --- | --- |
-| `torch` + `torchvision` | **Day03（P36 起）就要用** | 必须装 GPU 版，见下面「GPU 版 PyTorch」 |
-| `pandas` | Day02 文本分析（读数据、看标签分布） | — |
-| `matplotlib` | Day02 句子长度分布、词云 | 记得配 `SimHei` 中文字体 |
-| `scikit-learn` | 后面的评估、切分数据 | — |
-| `fasttext` | Day02 词向量、Day10 Fasttext 优化 | Windows 上常要现场编译，装不上再想办法 |
-| `wordcloud` | Day02 高频形容词词云 | — |
+| `pandas` | Day02 文本分析（P26 起：标签分布、句子长度） | 还没装 |
+| `matplotlib` | Day02 句子长度分布、散点图、词云（P28–P32） | 记得配 `SimHei` 中文字体 |
+| `wordcloud` | Day02 高频形容词词云（P32） | 还没装 |
+| `scikit-learn` | 后面的评估、切分数据 | 还没装 |
 | `transformers` `datasets` | Day10–Day12 预训练模型与迁移学习 | 体积大，用到再装 |
-| `tensorboard` | 词向量可视化 | — |
 | `opencc` | 繁转简（Day01 提过） | 可选 |
 
 按课程进度**用到再装**，不要一上来全装 —— 环境干净，出问题好定位。
 
-#### GPU 版 PyTorch（Day03 之前要装好）
+#### GPU 版 PyTorch（✅ 2026-10-10 已装好，命令留档备查）
 
 国内直连 `download.pytorch.org` 只有几 kB/s，走阿里云的 wheel 镜像（**扁平目录，要用 `-f` 不是 `-i`**）：
 
@@ -186,9 +258,14 @@ nlp/
 │   ├── 01_jieba使用.py                        精确 / 全 / 搜索引擎三种模式 + load_userdict
 │   ├── 02_POS（词性标注）.py                  pseg.lcut，加词典前后对比
 │   └── data/use.txt                           自定义词典：电子科技大学 5 n / 软件工程 2 nz
-├── 文本张量表示/               Day01 P12–P16  one-hot 编码
+├── 文本张量表示/               Day01 P12–P16 one-hot ｜ Day02 P19–P24 词向量
 │   ├── 01_one-hot.py                          用 tensorflow.keras 的 Tokenizer 取 one-hot，joblib 存读
-│   └── model/tokenizer.pkl                    存下来的词表（word_index）
+│   ├── 02_CBOW和skiggram.py                   Day02 P19–P22 fastText 训练 / 保存 / 加载 CBOW 与 SkipGram
+│   ├── 03_word_embedding.py                   Day02 P24 nn.Embedding + TensorBoard add_embedding
+│   ├── data/ai20ag、data/fil9                 fastText 训练语料（大文件，已 gitignore）
+│   └── model/                                 tokenizer.pkl（小，提交）｜ CBOW/SkipGram_model.bin（972 MB，已 gitignore）
+├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
+├── .gitignore                 挡 4 个大文件 + runs/
 ├── README.md
 └── 课程进度.md                 189 P 完整课程地图与进度清单
 ```
@@ -208,14 +285,31 @@ nlp/
 | P11 | 用户自定义词典 | `jieba/01_jieba使用.py`、`jieba/data/use.txt` |
 | P12 | 文本预处理 NER 与 POS | `jieba/02_POS（词性标注）.py` |
 | P13–P16 | one-hot（介绍 / 获取 / 使用 / 简单实现） | `文本张量表示/01_one-hot.py` |
-| P17 | word2vec CBOW 原理 | 纯理论，无代码（要点见上面「知识点笔记」第 4 节） |
+| P17 | word2vec CBOW 原理 | 纯理论，无代码（要点见上面 Day01 第 4 节） |
+| P18 | Word2Vec 之 SkipGram 词向量解释 | 纯理论（要点见 Day01 第 4 节；Skip-gram 更新次数是 CBOW 的 `2×window` 倍） |
+| P19 | FastText 环境搭建 | `文本张量表示/02_CBOW和skiggram.py`（用 fasttext-wheel） |
+| P20 | FastText 词向量模型的训练和保存 | `文本张量表示/02_CBOW和skiggram.py` |
+| P21 | FastText 加载 / 查看 / 模型效果检验 | `文本张量表示/02_CBOW和skiggram.py` |
+| P22 | FastText 模型参数设定 | `文本张量表示/02_CBOW和skiggram.py`（epoch / lr / dim / ws / minCount） |
+| P23 | WordEmbedding 和 Word2Vec 的区别 | 纯理论 |
+| P24 | WordEmbedding 获取词向量（+ TensorBoard 可视化） | `文本张量表示/03_word_embedding.py` |
+| P25 起 | 词向量相似性 → 文本分析（标签分布 / 句子长度 / 词云 / n-gram） | 未开始 |
 
 ## 运行方式
 
 ```powershell
 # 项目环境是 nlpbase，直接用它的解释器
 D:\Anaconda3\envs\nlpbase\python.exe jieba\01_jieba使用.py
+
+# 词向量可视化：先跑脚本写事件文件，再起 TensorBoard（--logdir 必须和脚本里的 log_dir 一致）
+D:\Anaconda3\envs\nlpbase\python.exe 文本张量表示\03_word_embedding.py
+D:\Anaconda3\envs\nlpbase\Scripts\tensorboard.exe --logdir=D:\ML_Project\nlp\runs
+
+# 想让局域网 / 手机也能看（要过防火墙，且它没有登录认证）：
+D:\Anaconda3\envs\nlpbase\Scripts\tensorboard.exe --logdir=D:\ML_Project\nlp\runs --host=0.0.0.0 --port=6006
 ```
+
+TensorBoard 起好后浏览器开 <http://localhost:6006>，顶栏切到 **PROJECTOR** 看词向量投影图。
 
 或在 PyCharm 里打开对应文件按 `Shift+F10`。
 
@@ -233,11 +327,107 @@ D:\Anaconda3\envs\nlpbase\python.exe jieba\01_jieba使用.py
 
 > 跟着课程实际撞到的问题按顺序记在这里（自己补充）。
 
-（暂无）
+### 1. PyCharm 的「还原提交」(Revert) 不是"撤销提交"，它会把文件**从磁盘删掉**
+
+- 场景：提交里混进了 2 个 972 MB 的 `.bin` + 1 个 680 MB 语料，想撤回，于是在 Git 日志里点了「还原提交」
+- 后果：Revert 生成的是**反向提交**，对"新增文件"的提交来说就是**删除文件** —— 训练好的模型和刚写的 `.py` 一起没了
+- 救回来：内容还在 `.git` 里，`git reset --hard <提交>` 或 `git checkout <提交> -- <路径>` 即可还原（当时逐字节核对过 SHA-1）
+- **正确做法**：
+
+  | 情况 | 用什么 |
+  | --- | --- |
+  | 提交**没 push**，想反悔 | Git 窗口 → Log → 右键最新提交 →「**撤消提交**」＝ `git reset --soft HEAD~1` |
+  | 想退回到更早的提交 | 右键 →「将当前分支重置到此处…」→ 模式选「**软**」（硬重置会丢本地改动） |
+  | 提交**已经 push** 了 | 才用「还原提交」(Revert) |
+
+### 2. GitHub 单文件 100 MB 硬限制
+
+- 两个 `.bin` 各 972 MB、`fil9` 680 MB → **push 一定会被拒**（超 100 MB 直接拒绝，超 50 MB 会警告）
+- 处理：`git rm --cached` 只从版本库移除（磁盘文件保留）+ 写 `.gitignore`
+- 教训：**训练产物和语料不要进 git**；真要分享用 Git LFS / GitHub Release / 网盘
+
+### 3. TensorFlow 在 Windows 中文路径下会崩（本项目最大的坑）
+
+- 报错：`tensorflow.python.framework.errors_impl.FailedPreconditionError: . is not a directory`
+  （来自 `SummaryWriter` → `EventFileWriter` → `tf.io.gfile.makedirs`，不是 PyTorch 的问题）
+- 根因：**目录名是中文**（`文本张量表示`）。TensorFlow 的 Windows 文件层列举目录时返回的是 **ANSI(GBK) 字节**，却按 UTF-8 解码：
+
+  ```
+  tf.io.gfile.listdir(中文目录) -> UnicodeDecodeError: 'utf-8' codec can't decode byte 0x87
+  ```
+
+  而"判断某路径是不是目录"这一步恰好需要列目录 → `./runs`（要判断父目录 `.`）、绝对中文路径**全部失败**
+- 对照实验（同一份代码，只换目录/写法）：
+
+  | 工作目录 | 路径写法 | 结果 |
+  | --- | --- | --- |
+  | 全英文（`C:\...\Temp`、`D:\ML_Project\nlp`） | `./runs` | ✅ |
+  | 中文目录 `文本张量表示` | `./runs` | ❌ `. is not a directory` |
+  | 中文目录 | `runs`（目录不存在时） | ✅ 侥幸通过 |
+  | 中文目录 | `runs`（目录已存在） | ❌ `runs is not a directory` |
+  | 中文目录 | 绝对路径 | ❌ `…文本张量表示 is not a directory` |
+
+- **解法：`log_dir` 用全英文绝对路径**，其他代码都不用动：
+
+  ```python
+  my_summary = SummaryWriter(log_dir=r'D:\ML_Project\nlp\runs')
+  ```
+
+  启动也要一致：`tensorboard --logdir=D:\ML_Project\nlp\runs`
+- **治本**：把 `文本张量表示` 改成英文目录名。TF 系（`tf.keras` 存模型、读数据集、SavedModel）以后还会在别处踩这个坑
+
+### 4. TensorBoard 起不来：`No module named 'pkg_resources'`
+
+- 现象：`tensorboard --logdir=...` 直接 Traceback，连 `tensorboard --version` 都失败
+- 根因：`setuptools 84.0.0` 已移除 `pkg_resources`，而 `tensorboard 2.19.0` 启动时硬要 import 它
+  （TF 2.19 又把 tensorboard 钉在 2.19，升不上去）
+- 处理：`pip install "setuptools<81"`，官方警告原文就写着 *pin to Setuptools<81*。当前 **81.0.0**，实测可用
+- 验证：`tensorboard --version` → `2.19.0`；实际启动 → HTTP 200
+
+### 5. `add_embedding` 的 metadata 个数必须等于矩阵行数
+
+- 报错：`AssertionError: #labels should equal with #data points`
+- 原因：`embd.weight` 是 **24 行**（23 个词 + 1 个预留位），而 `list(tokenizer.word_index.keys())` 只有 **23 个**
+- 修法：`metadata=['<PAD>'] + list(tokenizer.word_index.keys())`
+- 进阶：**顺序不要赌 `keys()`**，按编号回填更稳（见上面 Day02 第 4 节）
+
+### 6. 相对路径 = 相对"工作目录"，不是相对脚本文件
+
+- 见上面「运行方式」的 ⚠ 说明（`./data/use.txt` 在 PyCharm 默认工作目录下会 `FileNotFoundError`）
+
+### 7. TensorBoard 启动：`--logdir` 别拼成 `--logdis`
+
+- 参数是 **`--logdir`**（dir = directory）。写成 `--logdis=runs` 会直接退出，退出码 2：
+
+  ```
+  tensorboard: error: unrecognized arguments: --logdis=runs
+  ```
+
+- **命令找不到**（`'tensorboard' 不是内部或外部命令`）：它不在系统 PATH 里（在 `D:\Anaconda3\envs\nlpbase\Scripts\`），
+  用完整路径，或先 `conda activate nlpbase`
+- **三种启动姿势**（实测通过）：
+
+  ```powershell
+  # 1) 绝对英文路径，任何目录都能跑（推荐）
+  D:\Anaconda3\envs\nlpbase\Scripts\tensorboard.exe --logdir=D:\ML_Project\nlp\runs
+  # 2) 先 cd 到项目根，再用相对路径
+  cd D:\ML_Project\nlp ; D:\Anaconda3\envs\nlpbase\Scripts\tensorboard.exe --logdir=runs
+  # 3) 局域网 / 手机也能看
+  D:\Anaconda3\envs\nlpbase\Scripts\tensorboard.exe --logdir=D:\ML_Project\nlp\runs --host=0.0.0.0 --port=6006
+  ```
+
+- `--host 0.0.0.0` 的两个副作用：① 首次会弹 **Windows 防火墙**授权，不放行就只有本机能连；
+  ② 它**没有任何登录认证**，等于把事件文件暴露给同网段所有人 —— 只在本机看就别加这一项
+- **别在中文目录里启动**，也别把 `--logdir` 指到含中文子目录的父目录，否则又回到第 3 条的 `UnicodeDecodeError`
+- 自检"TensorBoard 到底读没读到数据"：访问 `http://localhost:6006/data/plugin/projector/runs`
+  → 返回 `["."]` 就说明读到了（run 名显示为 `.`，因为 logdir 直接指向 run 目录本身）
+- 它是**常驻服务**，`Ctrl+C` 停止
 
 ## 说明
 
 - 课程资料版权归黑马程序员所有，本仓库仅存放个人练习代码与笔记
+- **文档更新约定**：每次学习结束后，由 AI 助手同步刷新本文件与 [`课程进度.md`](课程进度.md)，
+  改完**直接提交**，提交信息固定为 **「更新文档」**；`git push` 由我自己执行
 - 上一个项目的踩坑经验（OpenMP 冲突、`batch_size` 对 GPU 利用率的影响、`CrossEntropyLoss` 的类别维要求等）见 `D:\ML_Project\Deep Learn\README.md`，NLP 阶段还会再遇到
 
 ## 参考
