@@ -19,8 +19,8 @@
 | 导学 | 课程导学 | P1 | ✅ 已完成 |
 | Day01 | 文本预处理：分词 / 词性标注 / NER / one-hot / CBOW | P2–P17 | ✅ 已完成 |
 | Day02 | 词向量与文本分析 | P18–P35 | ✅ 已完成（词云 / 文本相似度两节无代码） |
-| Day03 | 文本规范 + RNN / LSTM / GRU | P36–P54 | 🟡 进行中（已到 P49 GRU 代码） |
-| Day04 | 人名分类案例实战 | P55–P65 | ⬜ 未开始 |
+| Day03 | 文本规范 + RNN / LSTM / GRU | P36–P54 | ✅ 已完成 |
+| Day04 | 人名分类案例实战 | P55–P65 | ✅ 已完成（三模型对照：**GRU 88.2% > LSTM 87.3% > RNN 76.0%**） |
 | Day05 | 注意力机制 | P66–P79 | ⬜ 未开始 |
 | Day06 | Seq2Seq 英译法案例（上） | P80–P95 | ⬜ 未开始 |
 | Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | ⬜ 未开始 |
@@ -114,9 +114,9 @@
 - 学习率**随进度线性衰减**（0.025 → 0.0001）：轮数给太少 = 还没退火完就停了
 - 原版 C 实现的两个细节：**dynamic window**（每步的窗口在 `[1, window]` 里随机取，越近的词越常当上下文）、**subsampling**（高频词按概率直接丢掉）
 
-### Day02 词向量与 WordEmbedding（P18–P25）
+### Day02 词向量与 WordEmbedding（P18–P35）
 
-> 当前进度：Day02 进行中，已到 **P24 WordEmbedding 获取词向量**。下一个是 **P25 WordEmbedding 查看词向量的相似性**。
+> 已全部完成（P18–P35）。下面记的是 P18–P25 这段的核心内容，P26–P34 的文本分析见 `文本分析/` 目录。
 
 #### 1. FastText 实操（P19–P22）→ `文本张量表示/02_CBOW和skiggram.py`
 
@@ -185,9 +185,9 @@ my_summary.close()
 - 启动：`tensorboard --logdir=D:\ML_Project\nlp\runs` → 浏览器 `http://localhost:6006` → 顶栏切到 **PROJECTOR**
 - ⚠ 现在展示的是**随机初始化**的词向量（还没训练），图上一团乱麻；要训练之后再看才有聚类意义
 
-### Day03 文本规范 + RNN / LSTM（P36–P54）
+### Day03 文本规范 + RNN / LSTM / GRU（P36–P54）
 
-> 当前进度：已到 **P49 GRU 模型_代码演示**，下一个是 **P50 RNN人名分类案例_需求介绍**。
+> 已全部完成（P36–P54）。P50–P54 是"人名分类案例的数据准备"，和 Day04 是一个连贯的案例，笔记统一放在下面的 Day04。
 >
 > **Day03 的详细笔记单独成篇**（内容较长，不往 README 里塞）：
 > - 📄 [`RNN模型/LSTM反向传播.md`](RNN模型/LSTM反向传播.md) — LSTM 到底有几组权重、四个门的梯度怎么更新、为什么 `c_t` 是"梯度高速公路"（全部带实测数字，文末附可复制的复现代码）
@@ -250,6 +250,121 @@ my_summary.close()
 > 1. **PyTorch 的写法是 `h_t = (1-z_t)⊙n_t + z_t⊙h_{t-1}`**（`z` = 保留旧记忆的比例），教材上另一种写法 `z` 的含义正好相反，抄混了前向就对不上。
 > 2. **重置门 `r` 只作用于 `W_hn·h_{t-1} + b_hn` 这一项**，不是作用在整个候选状态上。
 > 3. GRU 的 `∂h_t/∂h_{t-1}` 是**稠密矩阵**（因为 `h` 既是记忆又参与门的计算），不像 LSTM 的 `∂c/∂c` 是严格对角阵——实测每步梯度衰减 **GRU ×0.613 < LSTM ×0.663**，长距离记忆 LSTM 略胜。
+
+### Day04 人名分类案例实战（P55–P65）
+
+> 一个完整闭环：全局字母表 → 读数据 → Dataset → DataLoader → RNN/LSTM/GRU 三套模型 → 训练 → 日志 → 对比图 → 预测。
+> 代码在 [`RNN模型/04_人名国家识别.py`](RNN模型/04_人名国家识别.py)，实验日志与图在 [`RNN模型/log/`](RNN模型/log)。
+
+#### 1. 数据与形状链路（这张表值一章）
+
+| 环节 | 形状 | 说明 |
+| --- | --- | --- |
+| 原始一行 | `'Abl\tCzech'` | 名字 + 国家，20,074 行 / 18 个国家 |
+| `dataset[i]` | `(名字长度, 57)` | 每字符 one-hot，57 = `string.ascii_letters + " .,;'"` |
+| `DataLoader(batch_size=1)` | `(1, 名字长度, 57)` | 默认 collate 自动加 batch 维 |
+| `nn.RNN(batch_first=True)` 的 `out` | `(1, 名字长度, 128)` | 每个时间步的隐藏状态（只含最顶层） |
+| `hn` / `out[:, -1, :]` | `(1, 128)` | 最后一步 = 整条名字的"记忆" |
+| `self.fc(...)` | `(1, 18)` | 18 个国家的 logits |
+
+**所以本项目不需要 `unsqueeze`**——DataLoader 已经把 batch 维补好了。课程里那句 `input.unsqueeze(1)` 是因为它自己造的输入是 2 维 `(6, 57)`（它的 `nn.RNN` 也没写 `batch_first=True`）。**在 DataLoader 之后再 `unsqueeze(1)` 会变 4 维直接报错**：`ValueError: RNN: Expected input to be 2D or 3D, got 4D tensor instead`。
+
+#### 2. `hn` 和 `out[:, -1, :]` 是不是一回事
+
+**单向时是**（实测 `torch.equal` 逐位相同），不管几层。差别只在健壮性：
+
+| 配置 | `out[:, -1, :]` | `hn[-1]` | `hn[0]` |
+| --- | --- | --- | --- |
+| 单层单向（本项目） | ✅ | ✅ | ✅ |
+| 多层单向 | ✅ | ✅ | ❌ 静默取浅层 |
+| 双向 `bidirectional=True` | ⚠️ 反向那半只见过最后一个字 | ❌ 只有反向那一半 | ❌ |
+| 忘了 `batch_first` | ❌ 静默错形状 | ✅ | ✅ |
+
+**结论：写 `self.fc(hn[-1])`**——层数和 `batch_first` 双免疫。双向分类才需要 `torch.cat([hn[-2], hn[-1]], dim=-1)`。
+
+#### 3. 什么时候需要返回 `hn`
+
+> **喂进去的是"完整的一条数据"，还是"某条数据的一小段"？完整 → 不用 hn；一小段 → 必须 hn。**
+
+| 场景 | 要 hn 吗 | 谁在循环 |
+| --- | --- | --- |
+| 分类 / 回归（本项目） | ❌ | `nn.RNN` 内部自己循环完 |
+| 同一条序列拆多次喂（逐字符、长文本切片） | ✅ | 循环写在你手里 |
+| 文本生成（逐词吐字） | ✅ | 同上 |
+
+⚠️ **hn 绝不能跨"不同样本"携带**——实测：带着上一条人名的 `hn` 去读下一条，数学上等价于**把两条无关人名当成一句话读**（`torch.equal` 验证过）。课程 P57 的测试函数演示了"一次性送"和"一个字符一个字符送"两种写法，两者结果相同（差 ~1e-7 的 float 误差）。
+
+#### 4. LSTM 的初始状态：`(None, None)` 会崩
+
+```python
+self.rnn(x, (None, None))   # ✗ AttributeError: 'NoneType' object has no attribute 'dim'
+self.rnn(x)                 # ✓ 不传 = 自动全 0
+self.rnn(x, None)           # ✓ 等价于不传
+self.rnn(x, (h0, c0))       # ✓ 显式全 0 与"不传"结果完全相同
+```
+
+PyTorch 只特判 `hx=None` **本身**，组装成 `(None, None)` 它就不认了。分类任务推荐写成 `def forward(self, x, hx=None)`，三个模型就能用同一句调用。
+
+#### 5. LogSoftmax / NLLLoss / CrossEntropyLoss
+
+| 写法 | 数值 | 判定 |
+| --- | --- | --- |
+| `CrossEntropyLoss(logits)` | 2.657051 | ✅ 本项目用的 |
+| `NLLLoss(LogSoftmax(logits))` | 2.657051 | ✅ 与上面**完全等价** |
+| `CrossEntropyLoss(LogSoftmax(logits))` | 2.657051 | ⚠️ 多余但结果一样（log_softmax 幂等） |
+| `CrossEntropyLoss(softmax(logits))` | 2.876873 | ⚠️ 数值不同，多套了一层 |
+| `NLLLoss(softmax(logits))` | **-0.070155** | ❌ 错，损失变负数 |
+
+规则：**CrossEntropyLoss 吃原始 logits；NLLLoss 必须配 LogSoftmax。** 所以 `self.softmax = nn.LogSoftmax(dim=1)` 保持注释掉是对的。
+
+#### 6. 为什么 batch_size 只能是 1（以及 GPU 为什么帮不上忙）
+
+```
+各人名长度: Abl=3  Adsit=5  Ajdrna=6  Alt=3  Antonowitsch=12  Antonowitz=10    （2~19，共 18 种）
+
+batch_size=2 -> RuntimeError: stack expects each tensor to be equal size,
+                but got [3, 57] at entry 0 and [5, 57] at entry 1
+```
+
+变长序列不能直接 stack，所以这个案例只能 b=1。**代价是 GPU 完全用不上**（实测 RTX 5060 Ti）：
+
+| batch_size | CPU | GPU | 结论 |
+| --- | --- | --- | --- |
+| **1** | 0.798 ms/step | 0.818 ms/step | **GPU 反而略慢（0.98×）** |
+| 32 | 1.960 ms/step | 0.860 ms/step | GPU 2.28× |
+| 256 | 3.500 ms/step | 0.900 ms/step | GPU 3.89× |
+
+想真正用上 GPU，得先做 padding + `pack_padded_sequence`（或按长度分桶）把 batch 提到 32 以上。
+
+#### 7. 三模型对照实验结果（P60–P63）
+
+20,074 条 / 18 个国家，5 轮，Adam lr=0.001，batch_size=1：
+
+| 模型 | 耗时 | 最终损失 | 第1轮 | 第2轮 | 第3轮 | 第4轮 | 第5轮 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **GRU** | 142.3s | **0.5650** | 71.8% | 80.9% | 84.1% | 86.4% | **88.2%** |
+| **LSTM** | 148.8s | 0.6116 | 69.5% | 79.8% | 83.0% | 85.5% | 87.3% |
+| **RNN** | 140.5s | 0.8979 | 65.6% | 72.0% | 74.6% | 75.6% | 76.0% |
+| （基线：全猜 Russian） | — | — | — | — | — | — | 46.9% |
+
+**结果和理论对得上**：GRU 只有 3 组门、LSTM 有 4 组（参数量 510 : 680），小数据上 GRU 常常打平或略胜——这次是**略胜且更快**；RNN 低 12 个点、损失高 0.33，正是"梯度衰减最快"的直接体现（实测每步衰减 **RNN ×0.513 < GRU ×0.613 < LSTM ×0.663**，见 Day03 笔记）。
+
+⚠️ **局限（诚实记录）**：这三个数字是**训练集准确率**——`my_Dataloader` 用了整个文件、没有划分训练/验证集，所以还不能说明泛化能力。下一步该切出 10~20% 验证集（人名分类这种"记忆型"任务尤其容易虚高）。
+
+#### 8. 日志与可视化的做法
+
+训练时每个模型写一份 JSON，画图只读 JSON：
+
+```
+RNN模型/log/
+├── rnn.json / lstm.json / gru.json   每个含：耗时、loss_list、acc_list、超参数
+├── loss_compare.png                  损失下降对比
+├── acc_compare.png                   准确率对比（含 46.9% 基线）
+├── acc_per_epoch.png                 每轮准确率柱状对比
+└── time_compare.png                  耗时对比
+```
+
+**图和训练解耦**——重画不用重训；日志本身就是"实验可复现"的证据（三个 JSON 共约 87 KB，值得提交）。
 
 ## 环境
 
@@ -335,12 +450,16 @@ nlp/
 │   ├── 02_n_gram实现.py                       P34 n-gram 文本特征
 │   ├── 03_文本长度规范.py                      P36 按分位数定截断长度
 │   └── data/train.tsv、dev.tsv、SimHei.ttf    影评数据 3000 + 1000 条（已提交）｜ SimHei 中文字体（已 gitignore）
-├── RNN模型/                    Day03 P41 RNN ｜ P44–P49 LSTM / GRU
+├── RNN模型/                    Day03 P41 RNN ｜ P44–P49 LSTM / GRU ｜ Day03–04 P50–P65 人名分类案例
 │   ├── 01_RNN.py                              P41 nn.RNN 的形状演示（input/output/hn）
 │   ├── 02_LSTM.py                             P47 nn.LSTM + h0/c0，output/h1/c1 形状
 │   ├── 03_GRU.py                              P49 nn.GRU（注意：只有 h，没有 c）
+│   ├── 04_人名国家识别.py                       P50–P65 完整案例：Dataset/DataLoader + 三模型 + 训练 + 日志 + 画图 + 预测
 │   ├── LSTM反向传播.md                         Day03 LSTM 反向传播笔记（课程没展开的部分，文末附复现代码）
-│   └── GRU门控与反向传播.md                     Day03 GRU 两个门的细节 + 反向传播（含四方衰减实测）
+│   ├── GRU门控与反向传播.md                     Day03 GRU 两个门的细节 + 反向传播（含四方衰减实测）
+│   ├── data/name_classfication.txt            人名数据 20,074 条 / 18 个国家（312 KB，已提交）
+│   ├── model/                                 my_rnn / my_lstm / my_gru.pth（共 782 KB，已提交）
+│   └── log/                                   rnn/lstm/gru.json 训练日志 + 4 张对比图
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
 ├── .gitignore                 挡 4 个大文件 + runs/
 ├── README.md
@@ -391,6 +510,22 @@ nlp/
 | P47 | LSTM 模型_代码实现 | `RNN模型/02_LSTM.py` |
 | P48 | GRU 模型_原理图解 | 纯理论（要点见上面 Day03 第 5 节） |
 | P49 | GRU 模型_代码演示 | `RNN模型/03_GRU.py` |
+| P50 | RNN 人名分类案例_需求介绍 | 纯理论（18 个国家、变长人名 → 分类任务） |
+| P51 | 人名分类案例_获取全局字母表和国家名 | `RNN模型/04_人名国家识别.py`（`all_letters` / `categorys`） |
+| P52 | 人名分类案例_读取数据到内存 | `RNN模型/04_人名国家识别.py`（`read_data`） |
+| P53 | 人名分类案例_构建数据集对象 | `RNN模型/04_人名国家识别.py`（`My_ClassDataset`，`__getitem__` 里做 one-hot） |
+| P54 | 人名分类案例_构建数据加载器对象 | `RNN模型/04_人名国家识别.py`（`my_Dataloader`） |
+| P55 | 扩展_LogSoftmax() 函数讲解 | 纯理论（等价于 CrossEntropyLoss，见上面 Day04 第 5 节） |
+| P56 | 搭建 RNN 模型 | `RNN模型/04_人名国家识别.py`（`My_RNN`） |
+| P57 | 测试 RNN 模型 | `04_人名国家识别.py` 的 `dm02` 思路：一次性送 vs 逐字符送，结果相同 |
+| P58 | 搭建 LSTM 和 GRU 模型 | `RNN模型/04_人名国家识别.py`（`My_LSTM` / `My_GRU`） |
+| P59 | 测试三种模型 | 已实测：三个模型输出都是 `(1, 18)`，都能算 loss |
+| P60 | RNN 模型训练 | `04_人名国家识别.py`（`train_rnn`）→ `log/rnn.json` |
+| P61 | LSTM 模型训练 | `04_人名国家识别.py`（`train_lstm`）→ `log/lstm.json` |
+| P62 | GRU 模型训练 | `04_人名国家识别.py`（`train_gru`）→ `log/gru.json` |
+| P63 | 三种模型可视化 | `04_人名国家识别.py`（`save_train_log` / `plot_train_logs`）→ `log/*.png` |
+| P64 | RNN 模型预测 | `04_人名国家识别.py`（`name2tensor` / `predict`，三模型 Top3 对比） |
+| P65 | 思路总结 | 见上面 Day04 全节 |
 
 ## 运行方式
 
@@ -553,6 +688,40 @@ with open(path, encoding='utf-8') as f:
 ```
 
 **教训**：读完数据先核对行数（`len(df)` 要能对上文件行数）再做统计。**静默丢行比直接报错危险得多** —— 报错你会去查，丢行你根本不知道。
+
+### 9. 训练统计的"分子分母"必须同一口径（`RNN模型/04_人名国家识别.py` 踩到）
+
+想让曲线平滑，把每 100 步记录的**分母**改成了全局计数器 `seen`：
+
+```python
+seen = 0
+for epoch in range(epochs):
+    total_loss, total_acc_num = 0.0, 0     # ← 分子每轮清零（旧的写法）
+    for i, (x, y) in enumerate(dataloader):
+        seen += 1
+        ...
+        if (i + 1) % 100 == 0:
+            total_loss_list.append(total_loss / seen)      # 分子:本轮 | 分母:全局 ← 打架
+            total_acc_list.append(total_acc_num / seen)
+```
+
+**症状**：第 1 轮数字正常，之后越来越离谱——损失降到 0.077（几乎全对）而准确率显示 **17.4%**，而且**低于"全猜 Russian"的 46.9% 基线**。
+
+**根因**：第 1 轮 `seen == i+1`，两者恰好相等所以看不出问题；从第 2 轮起分母被前面几轮撑大，比值必然崩掉。放大倍数正是 `((轮次-1)×每轮样本数 + step) / step`——**轮末那个点永远等于"已完成的轮数"**（第 4 轮轮末 ×4.0000），这是最快的自检方法。
+
+**修法（二选一，不能混）**：
+
+| 想要的效果 | 分子 | 分母 |
+| --- | --- | --- |
+| 全局平滑曲线（推荐） | **不清零**，一直累加 | `seen` |
+| 每轮锯齿曲线 | 每轮清零 | `(i + 1)` |
+
+**这个东西是可以反推救回来的**：存的值 = `本轮累计 ÷ 全局seen`，所以 `本轮累计 = 存的值 × seen`，再用"本轮已处理样本数"当分母就还原了：
+`真实值 = 存的值 × (每轮样本数 × 已过轮数 + 本轮已处理数) ÷ 本轮已处理数`。第 1 轮反推结果与原始值完全一致（因为那一轮 `seen` 就等于 `i+1`），这本身就是公式正确的验证。
+
+反推后三模型的真实准确率：GRU 88.2% / LSTM 87.3% / RNN 76.0%，单调上升、无异常。
+
+**教训**：**统计量的分子和分母必须是同一个时间尺度**。改口径时要把"清零的位置"和"分母"一起检查——只改一半，数字会看起来像"模型训崩了"，实际是统计代码错了。
 
 ## 说明
 

@@ -8,3 +8,6 @@
 runs/
 RNN模型/model
 RNN模型/log/*.json
+# Python 编译缓存（生成物）
+__pycache__/
+*.pyc
