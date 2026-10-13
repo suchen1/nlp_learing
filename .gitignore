@@ -6,3 +6,5 @@
 
 # TensorBoard 事件文件（生成物，会一直长）
 runs/
+RNN模型/model
+RNN模型/log/*.json
