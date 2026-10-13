@@ -357,14 +357,23 @@ batch_size=2 -> RuntimeError: stack expects each tensor to be equal size,
 
 ```
 RNN模型/log/
-├── rnn.json / lstm.json / gru.json   每个含：耗时、loss_list、acc_list、超参数
+├── rnn.json / lstm.json / gru.json   每个含：耗时、loss_list、acc_list、per_epoch_*、超参数
 ├── loss_compare.png                  损失下降对比
 ├── acc_compare.png                   准确率对比（含 46.9% 基线）
 ├── acc_per_epoch.png                 每轮准确率柱状对比
 └── time_compare.png                  耗时对比
 ```
 
-**图和训练解耦**——重画不用重训；日志本身就是"实验可复现"的证据（三个 JSON 共约 87 KB，值得提交）。
+JSON 字段约定（这样 `plot_train_logs` 之类的代码读 `loss_list` 就永远是对的）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `loss_list` / `acc_list` | **修正后**的全局平滑曲线（每 100 个样本一个点），画图直接用这两个 |
+| `per_epoch_loss` / `per_epoch_acc` | 每轮曲线（每轮 200 个点，轮内重新起算） |
+| `elapsed_seconds` / `epochs` / `lr` / `batch_size` | 超参数与耗时 |
+| `raw_*_buggy` | 当初写错口径时的原始输出，**只留档，不要用**（原因见踩坑记录第 9 条） |
+
+**图和训练解耦**——重画不用重训；日志本身就是"实验可复现"的证据（三个 JSON 共约 263 KB，已提交）。
 
 ## 环境
 
