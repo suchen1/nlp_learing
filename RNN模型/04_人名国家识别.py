@@ -297,6 +297,7 @@ def plot_train_logs(log_dir='./log', save_dir=None):
     print('三张图已保存到:', save_dir)
 
 def name2tensor(name):
+    """把名字转换为 one-hot 编码的张量，形状为 (1, len(name), n_letters)"""
     tensor = torch.zeros(len(name), n_letters)
     for i, char in enumerate(name):
         if char in all_letters:
@@ -329,4 +330,5 @@ def predict(name):
         print(f'GRU Top3预测结果: {[categorys[i.item()] for i in gru_topi[0]]}, 概率: {[round(v.item(), 4) for v in gru_topv[0]]}')
 
 if __name__ == '__main__':
-     predict('Wang')
+    predict('Wang')
+
