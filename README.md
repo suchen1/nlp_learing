@@ -21,7 +21,7 @@
 | Day02 | 词向量与文本分析 | P18–P35 | ✅ 已完成（词云 / 文本相似度两节无代码） |
 | Day03 | 文本规范 + RNN / LSTM / GRU | P36–P54 | ✅ 已完成 |
 | Day04 | 人名分类案例实战 | P55–P65 | ✅ 已完成（三模型对照：**GRU 88.2% > LSTM 87.3% > RNN 76.0%**） |
-| Day05 | 注意力机制 | P66–P79 | ⬜ 未开始 |
+| Day05 | 注意力机制 | P66–P79 | 🟡 进行中（已写注意力代码实现，见 `注意力机制/`） |
 | Day06 | Seq2Seq 英译法案例（上） | P80–P95 | ⬜ 未开始 |
 | Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | ⬜ 未开始 |
 | Day08 | Transformer 逐层实现（上） | P110–P125 | ⬜ 未开始 |
@@ -469,13 +469,20 @@ nlp/
 │   ├── data/name_classfication.txt            人名数据 20,074 条 / 18 个国家（312 KB，已提交）
 │   ├── model/                                 my_rnn / my_lstm / my_gru.pth（共 782 KB，已提交）
 │   └── log/                                   rnn/lstm/gru.json 训练日志 + 4 张对比图
+├── 注意力机制/                  Day05 P66–P79 注意力机制（QKV / 权重 / 代码实现）
+│   ├── 01_代码实现.py                          P77 注意力代码实现 —— 两个版本对照：
+│   │                                           · My_Attention（位置打分版，课程/tutorial 写法）
+│   │                                           · My_Attention_Content（内容比对版，K 是每个词一个）
+│   └── 注意力步骤动画.html                     13 步交互动画：Seq2Seq+Attention 从编码到生成
+│                                               （单文件、零依赖，双击浏览器打开；← → 翻步）
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
-├── .gitignore                 挡 4 个大文件 + runs/
+├── __pycache__/               Python 字节码缓存（生成物，已 gitignore）
+├── .gitignore                 挡大文件 + runs/ + __pycache__
 ├── README.md
 └── 课程进度.md                 189 P 完整课程地图与进度清单
 ```
 
-后续目录（学到再建）：`词向量/` Day02 · `RNN/` Day03 · `人名分类/` Day03–04 · `注意力机制/` Day05 · `Seq2Seq英译法/` Day06–07 · `Transformer/` Day07–09 · `Fasttext/` Day10 · `预训练模型/` Day10–12
+后续目录（学到再建）：`Seq2Seq英译法/` Day06–07 · `Transformer/` Day07–09 · `Fasttext/` Day10 · `预训练模型/` Day10–12
 
 ## 分集 → 练习文件
 
