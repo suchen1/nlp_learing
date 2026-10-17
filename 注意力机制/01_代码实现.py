@@ -79,7 +79,7 @@ class My_Attention_Content(nn.Module):
 
     def forward(self, q, k, v):
         # 1、算分数：q 和【每一个】k 做点积  →  [1, 1, 32]
-        scores = torch.bmm(q, k.transpose(-2, -1)) / (self.query_dim ** 0.5)
+        scores = torch.bmm(q, k.transpose(-2, -1)) / (self.query_dim ** 0.5) # q [1, 1, 64] * k^T [1, 64, 32] = [1, 1, 32]
         attention_weights = F.softmax(scores, dim=-1)              # [1, 1, 32]
 
         # 2、加权求和 V
