@@ -10,3 +10,5 @@ RNN模型/model
 # Python 编译缓存（生成物）
 __pycache__/
 *.pyc
+.idea/
+.vscode/
