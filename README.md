@@ -21,8 +21,8 @@
 | Day02 | 词向量与文本分析 | P18–P35 | ✅ 已完成（词云 / 文本相似度两节无代码） |
 | Day03 | 文本规范 + RNN / LSTM / GRU | P36–P54 | ✅ 已完成 |
 | Day04 | 人名分类案例实战 | P55–P65 | ✅ 已完成（三模型对照：**GRU 88.2% > LSTM 87.3% > RNN 76.0%**） |
-| Day05 | 注意力机制 | P66–P79 | 🟡 进行中（已写注意力代码实现，见 `注意力机制/`） |
-| Day06 | Seq2Seq 英译法案例（上） | P80–P95 | ⬜ 未开始 |
+| Day05 | 注意力机制 | P66–P79 | ✅ 已完成（代码见 `注意力机制/`：位置打分版 + 内容比对版对照） |
+| Day06 | Seq2Seq 英译法案例（上） | P80–P95 | 🟡 进行中（**P80–P92 已看完**，`英译法/translate.py` 写到"无 Attention 解码器测试"；下一个 P93 = 有 Attention 解码器思路分析） |
 | Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | ⬜ 未开始 |
 | Day08 | Transformer 逐层实现（上） | P110–P125 | ⬜ 未开始 |
 | Day09 | Transformer 逐层实现（下） | P126–P143 | ⬜ 未开始 |
@@ -375,6 +375,137 @@ JSON 字段约定（这样 `plot_train_logs` 之类的代码读 `loss_list` 就�
 
 **图和训练解耦**——重画不用重训；日志本身就是"实验可复现"的证据（三个 JSON 共约 263 KB，已提交）。
 
+### Day05 注意力机制（P66–P79）
+
+代码：[`注意力机制/01_代码实现.py`](注意力机制/01_代码实现.py) ｜ 演示动画：[`注意力机制/注意力步骤动画.html`](注意力机制/注意力步骤动画.html)
+
+#### 1. Q / K / V 到底是什么
+
+- **同一个输入 × 三个不同的矩阵**：`q = x·W_Q`、`k = x·W_K`、`v = x·W_V`。**原始词向量不是其中任何一个**。
+- 名字来自"字典查找"的类比：硬查找只返回**一个** value，注意力是**加权混合所有** value。
+- 实测三者的形状（Seq2Seq 解码一步）：
+
+  | | 来源 | 形状 |
+  | --- | --- | --- |
+  | Q | 解码器当前状态 `(1,1,128)` | `(1,1,64)` ← 只解 1 步 |
+  | K | 编码器输出 `(1,32,128)` | `(1,32,64)` ← 32 个词 |
+  | V | 编码器输出 `(1,32,128)` | `(1,32,64)` ← 同形状但参数不同 |
+
+- **`k [1,32,64]` 怎么来的**：`32 = 源句词数`（序列长度），`64 = 投影维度`（`W_K` 的输出大小，自己定）。
+  路径 A（Seq2Seq）`词id → embedding(1,32,128) → 编码器 GRU → W_K → (1,32,64)`；
+  路径 B（Transformer）`embedding → W_K → (1,32,64)`。实测 `W_k(Henc[0,5]) == K[0,5]` ✓
+
+#### 2. 注意力四步 + 两种算分数的算法
+
+```
+① 算分数 → ② softmax → ③ 加权求和 V → ④ 与 Q 融合
+```
+
+只有第 ① 步有两种流派，后面三步完全一样：
+
+| 算法 | 公式 | 谁在用 |
+| --- | --- | --- |
+| **加性**（Bahdanau） | `v · tanh(W[q ; k])` | Bahdanau 原论文、小任务；**课程的 `Linear(cat(q,k))` 是它的极简版** |
+| **点积**（Luong） | `q · k / √d` | Transformer 及所有现代模型 |
+
+- **`bmm(q, k^T)` 不神秘——矩阵乘法 = 批量点积**。手算验证：`q=[1,2]`，三个 k 为 `[3,4]/[5,6]/[7,8]` → 点积 `11/17/23`，`bmm` 一次全算出 ✓
+- `k.transpose(-2,-1)` 的作用：把"一个词一行"变成"**一个词一列**"，矩阵乘法才能按词取。
+- `bmm` 要求两个参数都是 3D → 必须 `unsqueeze`；`matmul`/`@` 在 batch=1 时能用但 batch>1 会静默给出 `(B,B,d)`；
+  `einsum('bw,bwd->bd', w, V)` 不需要 unsqueeze 且完全并行（CPU 实测 3.429 ms vs bmm 3.355 ms vs 逐元素乘加 16.026 ms）。
+
+#### 3. ★ 课程的 attention 是"位置打分"，不是"内容比对"
+
+课程/tutorial 的写法是 `self.atten = nn.Linear(query_dim + key_dim, word_count)`，**输入是 `[q ; k]` 两个向量，输出 `word_count` 个分数**——第 j 个分数由第 j 行权重算出：
+
+```
+score_j = w_j · [q ; k] + b_j      ← w_j 是训练完固定下来的常数
+```
+
+- **每个位置一套参数**，且 32 个分数只由 `q` 和**那一个共享的 k** 决定
+- **完全不用到 v 的内容**：实测把 V 整个换掉，注意力权重**逐位完全相同**
+- 实测：改那个唯一的 k → **32 个权重全变**（因为这个 k 参与了每一行）
+
+**真正的内容比对要 K 是每个词一个**（`(1,32,64)`）：
+
+```python
+scores = torch.bmm(q, k.transpose(-2, -1)) / (q.size(-1) ** 0.5)   # (1,1,64)@(1,64,32) → (1,1,32)
+attention_weights = F.softmax(scores, dim=-1)
+attention_output  = torch.bmm(attention_weights, v)
+```
+
+实测：**只改第 5 个词的 k → 变化的分数下标恰好是 `[5]`** ✓ 这才叫"拿 q 去和每个词的 k 比相似度"。
+两版代码都在 [`注意力机制/01_代码实现.py`](注意力机制/01_代码实现.py) 里，跑一遍 `__main__` 能直接看到差别。
+
+| | 位置打分（课程） | 内容比对（标准） |
+| --- | --- | --- |
+| 分数输入 | `[q ; 一个共享的 k]` | `[q ; k_j]` |
+| 改一个词的 k | 32 个分数全变 | 只有那一个变 |
+| 语序变化 / 变长句子 | ❌ 失效 | ✅ 天然支持 |
+| 谁在用 | 官方 tutorial、本课程 | Transformer、所有现代模型 |
+
+#### 4. 除以 `√d` 是**缩放**，不是装饰
+
+`q·k` 是 d 个乘积之和，若分量均值 0 方差 1，则**点积的方差 = d、标准差 = √d**（d=64 实测：方差 64.76、标准差 8.05，理论 √64=8.00）。
+
+数值一大，softmax 就饱和 → 梯度消失：
+
+| d | 不缩放：最大权重 | 熵 | **梯度模长** |
+| --- | --- | --- | --- |
+| 16 | 0.62 | 1.07 | 0.459 |
+| 64 | 0.89 | 0.47 | 0.136 |
+| **256** | **1.0000** | **0.000** | **0.00000** ← 梯度精确为 0，训练直接卡死 |
+| 1024 | 0.9997 | 0.003 | 0.00041 |
+
+**除以 √d 之后**：不管 d 是 16 还是 1024，最大权重稳定在 0.13~0.25、熵 ~2.9、梯度 0.77~0.89 ✓
+→ 这就是 Transformer 论文里 **"Scaled** Dot-Product Attention" 那个 Scaled。
+
+#### 5. 自注意力 vs 交叉注意力：**公式一模一样，只是喂什么不同**
+
+```python
+def attention(q, k, v):                       # 同一段代码
+    scores = bmm(q, k.T) / √d;  w = softmax(scores);  return bmm(w, v)
+
+attention(X,     X,       X      )   # 自注意力：三个都传同一句话 → 分数是【方阵】(32,32)
+attention(dec_h, enc_out, enc_out)   # 交叉注意力：q 传解码器  → 分数是【长条】(1,32)
+```
+
+**判断方法：看 Q、K、V 从哪来。** 方阵 = 自注意力（32 个词两两相比），长条 = 交叉注意力。
+把 `q` 也换成 `(1,32,64)` 且 `k = v = q` → **代码一字不改就变成自注意力**。
+
+#### 6. 无注意力解码器：中间语义只注入一次
+
+- **中间语义 = 编码器最后一个时间步的隐藏状态**，形状 `(1, 1, H)` = `[层数, batch, 隐藏维度]`
+- 实测 `enc_out[0,-1,:]` 和 `enc_hidden[-1]` **完全相同**（单向 GRU）
+- 它是 `decoder(tmp, hidden)` 的**第二个参数**。⚠️ **不能写 `hidden[0]`**——那会变成 2 维，实测报
+  `For batched 3-D input, hx should also be 3-D but got 2-D tensor`
+
+```
+第 0 步：输入 SOS，hidden = 编码器的 hidden   ← 中间语义【只在这里注入一次】
+第 1 步起：输入上一个词，hidden = 解码器自己的
+```
+
+**第 1 步之后编码器就再也用不到了** —— 这就是**信息瓶颈**，源句越长信息丢得越多。
+注意力机制正是为此而生：每一步都重新对 `enc_out` **全部**算权重。带注意力的解码器 `input_size = embd + hidden = 256 + 512 = 768` 就是这个"拼接上下文"的体现。
+
+#### 7. 训练循环的两件必修课（P92 阶段踩到的）
+
+| 事情 | 结论 |
+| --- | --- |
+| **SOS 与右移** | 解码器输入必须是 `[SOS] + y[:-1]`，目标 `y`。**不塞 SOS 的硬证据**：实测 SOS 那一行的 embedding 梯度**全为 0**，永远停在随机初始化上 → 推理时第一步喂 SOS 直接崩（详见踩坑记录第 11 条） |
+| **decoder 里不能加 softmax** | `CrossEntropyLoss` 自带 `log_softmax`。加了之后实测 loss 偏大、**梯度只剩 16%**（0.0598 vs 0.3742）→ 训练明显变慢且难查（详见踩坑记录第 10 条） |
+
+**Teacher Forcing 与 Free-running 是两件正交的事：**
+
+| | 加 SOS？ | 每步喂什么 | 用在哪 |
+| --- | --- | --- | --- |
+| **正确训练** | ✅ | **真值** `y[0][j]` | Teacher Forcing |
+| **正确推理** | ✅ | **自己的预测** `topi` | Free-running |
+
+课程代码喂真值（对）但**没加 SOS**（缺）；自己最初写的那版加了 SOS（对）但喂的是自己的预测（训练时不该这么干）。
+**两件都要对才是正确训练。** 实测 free-running 一旦某步猜错，下一步输入就是错的 → 错误累积（玩具模型上直接退化成 `0↔6` 死循环）。
+
+**训练时循环其实不是必须的**：一次喂整句 `decoder(dec_input, hidden)` 与逐步循环**结果完全一致**（实测最大差异 `6.6e-7`），因为 GRU 本来就是从左到右处理。循环留给推理用。
+
 ## 环境
 
 | 项 | 版本 / 说明 |
@@ -390,13 +521,15 @@ JSON 字段约定（这样 `plot_train_logs` 之类的代码读 `loss_list` 就�
 | jieba | 0.42.1 |
 | joblib | 1.5.1（保存 / 加载 tokenizer） |
 | setuptools | 81.0.0（⚠ 见踩坑记录 4：新版移除了 `pkg_resources`，会让 TensorBoard 起不来） |
-| IDE | PyCharm 2026.1（`.idea/` 随项目） |
+| IDE | **VSCode**（主力；`.vscode/` 已 gitignore）、PyCharm 2026.1（`.idea/` 已 gitignore） |
 
 > **为什么单独开一个环境**：上一个深度学习项目用的 `base`（`C:\ProgramData\anaconda3`，Python 3.14.6 + torch 2.14.0+cu130）
 > Python 版本太新，而 NLP 这套要装 TensorFlow / fasttext / transformers，这些库在 **3.10** 上踩坑最少。
 > `base` 那套没动，随时能切回去；`learn` 环境里只有 jieba，暂时用不上。
 >
-> PyCharm 切换方式：Settings → Project: nlp → Python Interpreter → Add Interpreter → Conda Environment → **Use existing** → 选 `nlpbase`。
+> **切换解释器**：
+> - **VSCode**：`Ctrl+Shift+P` → `Python: Select Interpreter` → 选 `D:\Anaconda3\envs\nlpbase\python.exe`（选一次即写入 `.vscode/settings.json`）
+> - **PyCharm**：Settings → Project: nlp → Python Interpreter → Add Interpreter → Conda Environment → **Use existing** → 选 `nlpbase`
 
 ### 依赖现状（2026 年排查，基于 `nlpbase`）
 
@@ -475,6 +608,11 @@ nlp/
 │   │                                           · My_Attention_Content（内容比对版，K 是每个词一个）
 │   └── 注意力步骤动画.html                     13 步交互动画：Seq2Seq+Attention 从编码到生成
 │                                               （单文件、零依赖，双击浏览器打开；← → 翻步）
+├── 英译法/                      Day06 P80–P92 Seq2Seq 英译法案例（进行中，写到无 Attention 解码器）
+│   ├── translate.py                            P84–P92：数据清洗/预处理 → Dataset/DataLoader
+│   │                                           → EncoderRNN(GRU, 词表2803) → DecoderRNN_No_Attention
+│   │                                           （GRU, 词表4345, embd 256, hidden 512, 带 dropout）
+│   └── data/eng-fra-v2.txt                     英法句对 63,594 行（3.2 MB，已提交）
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
 ├── __pycache__/               Python 字节码缓存（生成物，已 gitignore）
 ├── .gitignore                 挡大文件 + runs/ + __pycache__
@@ -482,7 +620,7 @@ nlp/
 └── 课程进度.md                 189 P 完整课程地图与进度清单
 ```
 
-后续目录（学到再建）：`Seq2Seq英译法/` Day06–07 · `Transformer/` Day07–09 · `Fasttext/` Day10 · `预训练模型/` Day10–12
+后续目录（学到再建）：`Transformer/` Day07–09 · `Fasttext/` Day10 · `预训练模型/` Day10–12
 
 ## 分集 → 练习文件
 
@@ -542,6 +680,33 @@ nlp/
 | P63 | 三种模型可视化 | `04_人名国家识别.py`（`save_train_log` / `plot_train_logs`）→ `log/*.png` |
 | P64 | RNN 模型预测 | `04_人名国家识别.py`（`name2tensor` / `predict`，三模型 Top3 对比） |
 | P65 | 思路总结 | 见上面 Day04 全节 |
+| P66 | 注意力机制介绍 | 纯理论（要点见上面 Day05 第 1 节） |
+| P67 | 注意力机制_QKV 简介 | 纯理论（Q/K/V 是**同一输入 × 三个不同矩阵**；见 Day05 第 1 节） |
+| P68 | 注意力机制_实现步骤介绍 | 见上面 Day05 第 2 节（四步：算分数 → softmax → 加权求和 → 融合） |
+| P69 | Seq2Seq 架构_任务介绍 | 纯理论（编码器读源句 → 中间语义 → 解码器逐词生成） |
+| P70 | Seq2Seq 架构_加入注意力机制 | `注意力机制/注意力步骤动画.html`（13 步交互演示） |
+| P71 | 扩展1_普通的 Encoder_Decoder 框架 | 见上面 Day05 第 3 节（Q = 解码器上一步状态，K/V = 编码器输出） |
+| P72 | 扩展2_加入注意力机制的 Encoder_Decoder 框架 | 见上面 Day05 第 3 节 |
+| P73 | 扩展3_注意力概率分布的计算方式 | 见上面 Day05 第 2 节（加性 vs 点积两种算法） |
+| P74 | 扩展4_软注意力 / 硬注意力 / 自注意力简介 | 见上面 Day05 第 4 节（自注意力 = Q/K/V 同源，分数是方阵） |
+| P75 | 常见的注意力计算规则介绍 | 见上面 Day05 第 2 节 |
+| P76 | 扩展_bmm() 函数简介 | 见上面 Day05 第 1 节（bmm / matmul / einsum 三者对比与坑） |
+| P77 | 注意力机制_代码实现 | `注意力机制/01_代码实现.py`（`My_Attention`，课程"位置打分"版） |
+| P78 | 注意力机制_测试代码 | `注意力机制/01_代码实现.py` 的 `__main__`（两个版本对照） |
+| P79 | 注意力机制_参数解释 | 见上面 Day05 第 5 节（`word_count` 硬编码带来的长度约束） |
+| P80 | 英译法案例_需求介绍 | 纯理论（英→法翻译，63,594 句对） |
+| P81 | 如何配置 CUDA 环境及测试（上） | 纯理论（本机 RTX 5060 Ti 15.9 GB / sm_120，torch 2.14.0+cu130） |
+| P82 | 如何配置 CUDA 环境_实操 | 纯理论，无代码 |
+| P83 | 扩展_配置 CUDA 环境总结 | 纯理论，无代码 |
+| P84 | 数据清洗函数 | `英译法/translate.py`（`normalize_string`：小写 + 标点前加空格 + 去非字母） |
+| P85 | 数据预处理函数 | `英译法/translate.py`（`read_data`：英文词表 **2803** / 法文 **4345**，SOS=0 EOS=1） |
+| P86 | 构建数据集对象 | `英译法/translate.py`（`My_Dataset`，`__getitem__` 把句子转成编号 + EOS） |
+| P87 | 获取数据加载器对象 | `英译法/translate.py`（`my_dataloader`；⚠️ 变长句子 batch_size 只能为 1） |
+| P88 | 构建基于 GRU 的编码器 | `英译法/translate.py`（`EncoderRNN`：Embedding(2803,256) + GRU(256,512)） |
+| P89 | 测试基于 GRU 的编码器 | `英译法/translate.py`（`test_encoder`；输出 `(1,5,512)` / `hidden (1,1,512)`） |
+| P90 | 无 Attention 解码器_思路分析 | 见上面 Day05 第 6 节（中间语义只在第 0 步注入一次 = 信息瓶颈） |
+| P91 | 构建基于 GRU 解码器（无 Attention） | `英译法/translate.py`（`DecoderRNN_No_Attention`：Embedding(4345,256) + Dropout + GRU + Linear(512,4345)） |
+| P92 | 测试基于 GRU 的无 Attention 解码器 | `英译法/translate.py`（`test_decoder_No_Attention`） |
 
 ## 运行方式
 
@@ -559,14 +724,15 @@ D:\Anaconda3\envs\nlpbase\Scripts\tensorboard.exe --logdir=D:\ML_Project\nlp\run
 
 TensorBoard 起好后浏览器开 <http://localhost:6006>，顶栏切到 **PROJECTOR** 看词向量投影图。
 
-或在 PyCharm 里打开对应文件按 `Shift+F10`。
+或在 VSCode 里打开对应文件按 `F5`（PyCharm 是 `Shift+F10`）。
 
-> ⚠ **工作目录很重要**：现有脚本里用的是相对路径（`./data/use.txt`、`./model/tokenizer.pkl`），
+> ⚠ **工作目录很重要**：现有脚本里用的是相对路径（`./data/use.txt`、`./data/eng-fra-v2.txt`、`./model/tokenizer.pkl`），
 > 它们相对于**运行时的工作目录**，不是相对于脚本文件本身。
-> PyCharm 默认把 Working directory 设成**项目根目录**（`D:\ML_Project\nlp`），
-> 那样 `./data/use.txt` 会被解释成 `D:\ML_Project\nlp\data\use.txt` → `FileNotFoundError`。
+> VSCode / PyCharm 默认把 Working directory 设成**项目根目录**（`D:\ML_Project\nlp`），
+> 那样 `./data/use.txt` 会被解释成 `D:\ML_Project\nlp\data\use.txt` → `FileNotFoundError`
+> （实测：从项目根目录跑 `英译法/translate.py` 会报 `FileNotFoundError: './data/eng-fra-v2.txt'`）。
 > 两个办法，任选一个：
-> 1. 改运行配置：Run → Edit Configurations → **Working directory** 填 `$FileDir$`（脚本所在目录），一劳永逸；
+> 1. 改运行配置：VSCode 在 `launch.json` 里设 `"cwd": "${fileDirname}"`；PyCharm 是 Run → Edit Configurations → **Working directory** 填 `$FileDir$`，一劳永逸；
 > 2. 把脚本里的路径改成 `Path(__file__).parent / 'data' / 'use.txt'`，从此不挑工作目录。
 >
 > Windows 上 `python` 命令被 Microsoft Store 的应用别名占用时，用上面的完整路径。
@@ -738,6 +904,82 @@ for epoch in range(epochs):
 反推后三模型的真实准确率：GRU 88.2% / LSTM 87.3% / RNN 76.0%，单调上升、无异常。
 
 **教训**：**统计量的分子和分母必须是同一个时间尺度**。改口径时要把"清零的位置"和"分母"一起检查——只改一半，数字会看起来像"模型训崩了"，实际是统计代码错了。
+
+### 10. 解码器里加了 softmax，外面又用 CrossEntropyLoss → 梯度只剩 16%（`英译法/translate.py` 踩到）
+
+`nn.CrossEntropyLoss` **内部自带 `log_softmax`**，所以解码器 `forward` 里**不能**再写 softmax：
+
+```python
+output = self.softmax(self.out(output[0]))     # ✗ 外面用 CrossEntropyLoss 时错
+output = self.out(output[0])                   # ✓ 直接返回原始 logits
+```
+
+实测（10 类的小例子，二者形状都合法，所以不会报错）：
+
+| 写法 | loss | **梯度模长** |
+| --- | --- | --- |
+| 先 softmax 再 `CrossEntropyLoss` | 2.252067 | **0.059793** |
+| 直接 `CrossEntropyLoss(logits)` ✓ | 2.060659 | **0.374174** |
+
+**梯度只剩 16%（小了 84%）。** 原因是 `log_softmax(概率) ≠ log(概率)`：CE 会对已经归一化的概率**再做一次** `log_softmax`，把分布抹平：
+
+```
+log(概率)         = [-2.525, -1.913, -3.102]
+log_softmax(概率) = [-2.325, -2.257, -2.360]   ← 实际算的是这个
+```
+
+**三种合法组合**：无 softmax + `CrossEntropyLoss`（推荐）｜ `nn.LogSoftmax` + `nn.NLLLoss` ｜ `nn.Softmax` + **没有**匹配的损失。
+
+**顺带**：`nn.Softmax()` 不写 `dim` 会触发 `UserWarning: Implicit dimension choice for softmax has been deprecated`。
+二维张量上隐式选 `dim=1` 恰好是词表维所以"侥幸对"，但张量变成 3 维就会在**错误的维度**归一化。**永远写 `dim=-1`。**
+
+**教训**：这类错误 **loss 曲线照样在降**，只是慢——不看梯度就查不出来。**"不报错"不等于"对"。**
+
+### 11. 训练时不喂 SOS，SOS 的 embedding 永远学不到 → 推理第一步就崩（`英译法/translate.py` 踩到）
+
+解码器的输入必须**右移一位且以 SOS 开头**：
+
+```
+法文原句:              je    suis   etudiant   .
+目标 y（数据集返回）:  je    suis   etudiant   .   [EOS]
+解码器输入:        [SOS]  je    suis   etudiant   .          ← [SOS] + y[:-1]
+```
+
+**不塞 SOS 的两条错路**：
+
+| 错法 | 后果 |
+| --- | --- |
+| 输入 = 目标（不右移） | 第 0 步"输入 w1、要求输出 w1" = **抄输入**，模型学个恒等映射就能把 loss 压低，永远学不到翻译 |
+| 右移了但无 SOS | 第 1 个词**永远不会被预测**；且推理时第一步喂 SOS，模型训练时从没见过它 |
+
+**最硬的证据**（实测 embedding 梯度）：
+
+```
+输入含 SOS   [0, 3, 4, 5]  → SOS 那一行梯度【非零】✓ 会被更新
+输入不含 SOS [3, 4, 5, 6]  → SOS 那一行梯度【全 0】✗ 永远是随机初始化值
+                             有梯度的行号只有 [3, 4, 5, 6]
+```
+
+推理时第一步喂的就是 SOS，而它是个**从没被训练过的随机向量** → 输出乱码。
+
+**正确写法**（两种等价）：
+
+```python
+# A 循环 + 逐步喂真值（贴近课程风格）
+dec_input = torch.tensor([[SOS_TOKEN]], device=device)
+for j in range(y.shape[1]):                    # ★ 用 j，别覆盖外层的 i
+    logits, hidden = decoder(dec_input, hidden)
+    dec_input = y[0][j].view(1, -1)            # ★ 喂【真值】= teacher forcing
+
+# B 一次喂整句（decoder 支持 seq 输入时，更快）★ 推荐
+dec_input = torch.cat([torch.tensor([SOS_TOKEN], device=device), y[0][:-1]]).unsqueeze(0)
+logits, _ = decoder(dec_input, enc_hidden)
+loss = F.cross_entropy(logits.view(-1, FRENCH_VOCAB), y.view(-1))
+```
+
+**注意课程的原版代码喂的是 `y[0][i]`（没有 SOS）** —— 抄课程时要自己补上这一步。
+
+**教训**：**"训练时要喂的输入"和"推理时要喂的输入"必须一致**。训练时没出现过的符号，推理时给它就是垃圾进垃圾出。
 
 ## 说明
 
