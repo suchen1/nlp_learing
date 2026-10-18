@@ -30,7 +30,6 @@ def read_data(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
         my_pairs = [ [normalize_string(s) for s in line.split('\t')] for line in lines]
-        print(my_pairs[4][0])  # 打印第5行的英文句子
         english_words2index = {'SOS': SOS_TOKEN, 'EOS': EOS_TOKEN}  # 英文词汇表
         english_words_count = 2
 
@@ -80,16 +79,17 @@ def my_dataloader(batch_size=1, shuffle=True):
 
 class EncoderRNN(nn.Module):
     """编码器RNN"""
-    def __init__(self, input_size, hidden_size):
+    def __init__(self, input_size, hidden_size, embd_dim=256):
         super().__init__()
+        self.embd_dim = embd_dim # 词嵌入维度
         self.hidden_size = hidden_size # 隐藏层维度
         self.input_size = input_size   # 输入词汇表大小 
-        self.embedding = nn.Embedding(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size,batch_first=True) # 词嵌入层， 隐藏层维度，仅仅数值一样
+        self.embedding = nn.Embedding(input_size, embd_dim)
+        self.gru = nn.GRU(embd_dim, hidden_size,batch_first=True) # 词嵌入层， 隐藏层维度
 
     def forward(self, input, hidden):
         """前向传播"""
-        embedded = self.embedding(input).unsqueeze(0)  # [seq_len] -> [1, seq_len, hidden_size]
+        embedded = self.embedding(input)  # [1,seq_len] -> [1, seq_len, hidden_size]
         output, hidden = self.gru(embedded, hidden)    # output: [1, seq_len, hidden_size], hidden: [1, 1, hidden_size]
         return output, hidden
 
@@ -100,7 +100,8 @@ def test_encoder():
     """测试编码器"""
     input_size = english_words_count
     hidden_size = 256
-    encoder = EncoderRNN(input_size, hidden_size).to(device)
+    embd_dim = 256
+    encoder = EncoderRNN(input_size, embd_dim, hidden_size).to(device)
     input_tensor = torch.tensor([english_words2index[word] for word in "i am a student".split(' ')] + [EOS_TOKEN], dtype=torch.long).to(device)
     hidden = encoder.init_hidden()
     output, hidden = encoder(input_tensor, hidden)
@@ -109,19 +110,45 @@ def test_encoder():
 
 class DecoderRNN_No_Attention(nn.Module):
     """解码器RNN（无注意力机制）"""
-    def __init__(self, hidden_size, output_size):
+    def __init__(self, hidden_size, output_size,embd_dim=256):
         super().__init__()
+        self.embd_dim = embd_dim
         self.hidden_size = hidden_size
         self.output_size = output_size
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size,batch_first=True)
-        self.out = nn.Linear(hidden_size, output_size)
+        self.embedding = nn.Embedding(output_size, embd_dim)
         self.drop = nn.Dropout(0.1)
+        self.gru = nn.GRU(embd_dim, hidden_size,batch_first=True)
+        self.out = nn.Linear(hidden_size, output_size)
     def forward(self, input, hidden):
         """前向传播"""
         embedded = self.embedding(input) # [1, seq_len] -> [1, seq_len, hidden_size]
         embedded = self.drop(embedded)  # dropout随即失活10%
         output, hidden = self.gru(embedded, hidden)    # output: [1, seq_len, hidden_size], hidden: [1, 1, hidden_size]
+        output = self.out(output[0])  # [1, seq_len, hidden_size] -> [1, output_size]
         return output, hidden
+    def init_hidden(self):
+        return torch.zeros(1, 1, self.hidden_size).to(device)
+
+def test_decoder_No_Attention():
+    """测试解码器（无注意力机制）"""
+    dataloader = my_dataloader()
+    my_encoder = EncoderRNN(input_size=english_words_count, embd_dim=256, hidden_size=512).to(device)
+    my_decoder = DecoderRNN_No_Attention(hidden_size=512, output_size=french_words_count, embd_dim=256).to(device)
+    print(f"my_encoder: {my_encoder}")
+    print(f"my_decoder: {my_decoder}")
+
+    for i, (x, y) in enumerate(dataloader):
+        print(f"Batch {i}: x shape: {x.shape}, y shape: {y.shape}")
+        print(f"x: {x}, y: {y}")
+        h0 = my_encoder.init_hidden()
+        encoder_output, encoder_hidden = my_encoder(x, h0)
+        decoder_hidden = encoder_hidden  # 解码器的初始隐藏状态为编码器
+        for j in range(y.shape[1]):  # 遍历目标句子的每个词
+            tmp = y[0][j].view(-1, 1)  # 将目标词转换为形状 [1, 1]
+            decoder_output, decoder_hidden = my_decoder(tmp, decoder_hidden)
+            print(f"第 {j + 1} 个词: decoder_output shape: {decoder_output.shape}, decoder_hidden shape: {decoder_hidden.shape}")
+        if i == 0:  # 只测试第一个批次
+            break
+
 if __name__ == "__main__":
-    test_encoder()
+    test_decoder_No_Attention()
