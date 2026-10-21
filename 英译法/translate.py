@@ -1,3 +1,4 @@
+import math
 import re
 import os
 os.system('cls' if os.name == 'nt' else 'clear')     # 先清屏再跑
@@ -150,5 +151,180 @@ def test_decoder_No_Attention():
         if i == 0:  # 只测试第一个批次
             break
 
+class Decoder_Attention(nn.Module):
+    def __init__(self, hidden_size, output_size, embd_dim=256):
+        super().__init__()
+        self.embd_dim = embd_dim
+        self.hidden_size = hidden_size   
+        self.output_size = output_size   
+        self.embedding = nn.Embedding(output_size, embd_dim)
+        self.drop = nn.Dropout(0.1)
+        self.attn_combine = nn.Linear(hidden_size + embd_dim, hidden_size)  # 注意力结合层
+        self.gru = nn.GRU(hidden_size, hidden_size, batch_first=True)  # GRU层
+        self.out = nn.Linear(hidden_size, output_size)  # 输出层
+    def forward(self, input, hidden, encoder_outputs):
+        """前向传播
+        input: [batch_size, 1] 目标词索引
+        hidden: [1, batch_size, hidden_size] 解码器的隐藏状态，当Q
+        encoder_outputs: [batch_size, seq_len, hidden_size] 编码器的输出当成K和V
+        """
+        embedded = self.embedding(input)  # [1, seq_len] -> [1, seq_len, embd_dim]
+        embedded = self.drop(embedded)  # dropout随即失活10%
+        # 计算注意力权重
+        score = torch.bmm(hidden.transpose(0, 1), encoder_outputs.transpose(-2, -1)) / math.sqrt(self.hidden_size)  
+        # Q.transpose[batch_size,1,hidden_size] * K^T[batch_size, hidden_size, seq_len] -> [batch_size, 1, seq_len]
+        attn_weights = F.softmax(score, dim=-1)  # [batch_size, 1, seq_len]
+        # 计算上下文向量
+        context = torch.bmm(attn_weights, encoder_outputs)  # [batch_size, 1, seq_len] * [batch_size, seq_len, hidden_size] -> [batch_size, 1, hidden_size]
+        combined = torch.cat((embedded, context), dim=-1)  # [batch_size, 1, embd_dim + hidden_size]
+        combined = self.attn_combine(combined)  # [batch_size, 1, hidden_size]
+        combined = F.relu(combined)  # 激活函数
+        output, hidden = self.gru(combined, hidden)  # GRU层
+        output = self.out(output[0])  # [batch_size, 1, hidden_size] -> [batch_size, output_size]
+        return output, hidden, attn_weights
+    def init_hidden(self):
+        return torch.zeros(1, 1, self.hidden_size).to(device)
+
+def test_decoder_Attention():
+    """测试解码器（带注意力机制）"""
+    dataloader = my_dataloader()
+    my_encoder = EncoderRNN(input_size=english_words_count, embd_dim=256, hidden_size=512).to(device)
+    my_decoder = Decoder_Attention(hidden_size=512, output_size=french_words_count, embd_dim=256).to(device)
+    print(f"my_encoder: {my_encoder}")
+    print(f"my_decoder: {my_decoder}")
+
+    for i, (x, y) in enumerate(dataloader):
+        print(f"Batch {i}: x shape: {x.shape}, y shape: {y.shape}")
+        print(f"x: {x}, y: {y}")
+        h0 = my_encoder.init_hidden()
+        encoder_output, encoder_hidden = my_encoder(x, h0)
+        decoder_hidden = encoder_hidden  # 解码器的初始隐藏状态为编码器
+        for j in range(y.shape[1]):  # 遍历目标句子的每个词
+            tmp = y[0][j].view(-1, 1)  # 将目标词转换为形状 [1, 1]
+            decoder_output, decoder_hidden, attn_weights = my_decoder(tmp, decoder_hidden, encoder_output)
+            print(f"第 {j + 1} 个词: decoder_output shape: {decoder_output.shape}, decoder_hidden shape: {decoder_hidden.shape}, attn_weights shape: {attn_weights.shape}")
+        if i == 0:  # 只测试第一个批次
+            break
+
+my_lr,epoch,teacher_forcing_ratio,print_interval_num,plot_interval_num = 0.0001, 10, 0.5, 1000, 100
+
+def one_train(encoder_rnn,decoder_rnn,encoder_optimizer,decoder_optimizer,criterion,x,y):
+    """单次训练
+    :param encoder_rnn: 编码器模型
+    :param decoder_rnn: 解码器模型
+    :param encoder_optimizer: 编码器优化器
+    :param decoder_optimizer: 解码器优化器
+    :param criterion: 损失函数
+    """
+    encoder_optimizer.zero_grad()
+    decoder_optimizer.zero_grad()
+    loss = 0.0
+    h0 = encoder_rnn.init_hidden()
+    encoder_output, encoder_hidden = encoder_rnn(x, h0) # 编码器输出和隐藏状态
+    decoder_hidden = encoder_hidden # 解码器的初始隐藏状态为编码器的隐藏状态
+    input_y = torch.tensor([[SOS_TOKEN]], dtype=torch.long).to(device) # 解码器的输入为起始符号
+    teacher_forcing = True if random.random() < teacher_forcing_ratio else False # 是否使用教师强制
+    if teacher_forcing: # 使用教师强制
+        for i in range(y.shape[1]): # 遍历目标句子的每个词
+            decoder_output, decoder_hidden, _ = decoder_rnn(input_y, decoder_hidden, encoder_output) # 解码器输出和隐藏状态
+            loss += criterion(decoder_output, y[0][i].view(-1)) # 计算损失
+            input_y = y[0][i].view(-1, 1) # 下一个输入为目标句子的下一个词
+    else: # 不使用教师强制
+        for i in range(y.shape[1]): # 遍历目标句子的每个词
+            decoder_output, decoder_hidden, _ = decoder_rnn(input_y, decoder_hidden, encoder_output) # 解码器输出和隐藏状态
+            loss += criterion(decoder_output, y[0][i].view(-1)) # 计算损失
+            topv, topi = decoder_output.topk(1) # 获取预测的词索引
+            if topi.item() == EOS_TOKEN: # 如果预测的词是结束符号，则停止解码
+                break
+            input_y = topi.detach() # 下一个输入为预测的词索引
+    loss.backward() # 反向传播
+
+    # 梯度裁剪，防止梯度爆炸
+    torch.nn.utils.clip_grad_norm_(
+    list(encoder_rnn.parameters()) + list(decoder_rnn.parameters()), 5.0)
+
+    encoder_optimizer.step() # 更新编码器参数
+    decoder_optimizer.step() # 更新解码器参数
+    return loss.item() / y.shape[1] # 返回平均损失
+
+def train():
+    """训练模型"""
+    dataloader = my_dataloader()
+    encoder_rnn = EncoderRNN(input_size=english_words_count, embd_dim=256, hidden_size=512).to(device) # 编码器模型
+    decoder_rnn = Decoder_Attention(hidden_size=512, output_size=french_words_count, embd_dim=256).to(device) # 解码器模型
+    encoder_optimizer = optim.Adam(encoder_rnn.parameters(), lr=my_lr)
+    decoder_optimizer = optim.Adam(decoder_rnn.parameters(), lr=my_lr)
+    criterion = nn.CrossEntropyLoss()
+    loss_list = []
+    for e in range(epoch):
+        print_total_loss = 0.0
+        plot_total_loss = 0.0
+        total_loss = 0.0
+        start_time = time.time()
+        for i, (x, y) in enumerate(dataloader):
+            loss = one_train(encoder_rnn, decoder_rnn, encoder_optimizer, decoder_optimizer, criterion, x, y)
+            print_total_loss += loss
+            plot_total_loss += loss
+            total_loss += loss
+            if (i + 1) % print_interval_num == 0:
+                print_avg_loss = print_total_loss / print_interval_num
+                print(f"Epoch [{e + 1}/{epoch}], Step [{i + 1}/{len(dataloader)}], print_avg_loss: {print_avg_loss:.4f}, Time: {time.time() - start_time:.2f}s")
+                print_total_loss = 0.0
+            if(i + 1) % plot_interval_num == 0:
+                avg_loss = plot_total_loss / plot_interval_num
+                loss_list.append(avg_loss)
+                plot_total_loss = 0.0
+        avg_loss = total_loss / len(dataloader)
+        print(f"Epoch [{e + 1}/{epoch}], Average Loss: {avg_loss:.4f}")
+        torch.save(encoder_rnn.state_dict(), f"./model/encoder_rnn_{e + 1}.pth")
+        torch.save(decoder_rnn.state_dict(), f"./model/decoder_rnn_{e + 1}.pth")
+    # 绘制损失曲线
+    plt.plot(loss_list)
+    plt.xlabel('Epoch')
+    plt.ylabel('Average Loss')
+    plt.title('Training Loss Curve')
+    plt.savefig('./img/loss_curve.png')
+    plt.show()
+    return loss_list
+
+def evaluate(sentence):
+    """评估模型，翻译输入句子"""
+    epoch = 5
+    encoder_rnn = EncoderRNN(input_size=english_words_count, embd_dim=256, hidden_size=512).to(device)
+    decoder_rnn = Decoder_Attention(hidden_size=512, output_size=french_words_count, embd_dim=256).to(device)
+    encoder_rnn.load_state_dict(torch.load(f"./model/encoder_rnn_{epoch}.pth"))
+    decoder_rnn.load_state_dict(torch.load(f"./model/decoder_rnn_{epoch}.pth"))
+    encoder_rnn.eval()
+    decoder_rnn.eval()
+    with torch.no_grad():
+        words = normalize_string(sentence).split(' ')
+        idx = [english_words2index[w] for w in words] + [EOS_TOKEN]
+        h0 = encoder_rnn.init_hidden()
+        input_tensor = torch.tensor(idx, dtype=torch.long).to(device).unsqueeze(0)  # [1, seq_len]
+        encoder_output, encoder_hidden = encoder_rnn(input_tensor, h0)
+        decoder_hidden = encoder_hidden
+        input_y = torch.tensor([[SOS_TOKEN]], dtype=torch.long).to(device)
+        translated_sentence = []
+        for i in range(MAX_LENGTH):
+            decoder_output, decoder_hidden, _ = decoder_rnn(input_y, decoder_hidden, encoder_output)
+            topv, topi = decoder_output.topk(1)
+            if topi.item() == EOS_TOKEN:
+                break
+            translated_sentence.append(french_index2words[topi.item()])
+            input_y = topi.detach()
+        return ' '.join(translated_sentence)
+
+
+
 if __name__ == "__main__":
-    test_decoder_No_Attention()
+    # test_decoder_No_Attention()
+    # test_decoder_Attention()
+    # train()
+    # 测试翻译
+    test_sentences = [
+    " we re in love.",
+    "i am very interested in french .",
+]
+    for sentence in test_sentences:
+        translation = evaluate(sentence)
+        print(f"English: {sentence} -> French: {translation}")

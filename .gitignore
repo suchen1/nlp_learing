@@ -7,6 +7,8 @@
 # TensorBoard 事件文件（生成物，会一直长）
 runs/
 RNN模型/model
+# 训练出的模型权重（每轮 27.5MB，10 轮 275MB，可由 translate.py 重新训练得到）
+英译法/model
 # Python 编译缓存（生成物）
 __pycache__/
 *.pyc
