@@ -22,7 +22,7 @@
 | Day03 | 文本规范 + RNN / LSTM / GRU | P36–P54 | ✅ 已完成 |
 | Day04 | 人名分类案例实战 | P55–P65 | ✅ 已完成（三模型对照：**GRU 88.2% > LSTM 87.3% > RNN 76.0%**） |
 | Day05 | 注意力机制 | P66–P79 | ✅ 已完成（代码见 `注意力机制/`：位置打分版 + 内容比对版对照） |
-| Day06 | Seq2Seq 英译法案例（上） | P80–P95 | ✅ **已完成**（P80–P92 视频 + P93–P95 **自己实现**的有 Attention 解码器；训练到第 5 轮，抽样正确率 **33% → 92.5%**，见 `英译法/`） |
+| Day06 | Seq2Seq 英译法案例（上） | P80–P95 | ✅ **已完成**（P80–P92 视频 + P93–P95 **自己实现**的有 Attention 解码器；batch=1 训练 5 轮到 **92.5%**，后又改造成 **batch=32（pad+pack+mask）**，每句快 20 倍，见 `英译法/`） |
 | Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | ⬜ 未开始 |
 | Day08 | Transformer 逐层实现（上） | P110–P125 | ⬜ 未开始 |
 | Day09 | Transformer 逐层实现（下） | P126–P143 | ⬜ 未开始 |
@@ -578,6 +578,198 @@ Decoder_Attention:
 | **decoder 里不能加 softmax** | `CrossEntropyLoss` 自带 `log_softmax`，加了梯度只剩 16% —— 见踩坑记录第 10 条 |
 | **推理时的 batch 维** | `evaluate` 里 `input_tensor` 必须 `.unsqueeze(0)`，否则 `embedding(1维)` → 2 维 → GRU 报 `For unbatched 2-D input, hx should also be 2-D but got 3-D` |
 
+#### 6. ★ batch 化改造：PAD + pack + mask（batch=1 → 32，每句快 20 倍）
+
+> **动机**：`batch=1` 时每轮 9.8 分钟，跑 5 轮就快一小时。改成 `batch=32` 后每轮 **0.7 分钟**。
+
+##### 6.1 四个问题、四个解法（**不是四选一，各修一处**）
+
+| # | 症状 | 解法 | 作用在哪一段 |
+| --- | --- | --- | --- |
+| ① | `stack expects each tensor to be equal size` → 组不了 batch | `my_collate` **补齐** | **DataLoader** |
+| ② | GRU 把 PAD 也读了 → `hidden` 被污染 | `pack_padded_sequence` | **编码器的 GRU** |
+| ③ | 注意力把权重分给 PAD | `masked_fill(-inf)` | **解码器的 softmax** |
+| ④ | 模型花力气学"预测 PAD" | `ignore_index=PAD` | **损失函数** |
+
+**★ 为什么 ② 做了还要 ③**（最容易晕的一点）：
+
+```
+pack            → GRU 跳过 PAD，hidden 干净了 ✓
+pad_packed_sequence → 但要把输出变回 (B, L, H) 才做得了 bmm，PAD 位置填 0
+                      ↓
+                 这些 0 仍是"候选位置"！softmax 只看"有几个候选"，不管值是 0
+                      ↓
+                 所以还要 mask 把它们从分母里去掉 ✓
+```
+
+实测：`pack` 后 `.data` 是 `(11, 512)`（只有真实词），但 `pad_packed_sequence` 后又是 `(2, 7, 512)`。**PAD 回来了。**
+
+##### 6.2 两个关键 PAD 编号（**不能是 0**）
+
+```python
+PAD_TOKEN_EN = english_words_count    # 2803   ← 词表 0~2802 之后的第一个空位
+PAD_TOKEN_FR = french_words_count     # 4345
+```
+
+| 编号 | 是什么 |
+| --- | --- |
+| 0 | **SOS** ← 已被占 |
+| 1 | **EOS** ← 已被占 |
+| 2 ~ 2802 | 真实词 |
+| **2803** | **PAD** |
+
+**为什么不能用 0**：`nn.Embedding(..., padding_idx=0)` 会把第 0 行**冻结成 0 向量且永远不给梯度**。SOS 也是 0 → SOS 被一起冻死，解码器第一步就喂进一个全 0 垃圾（实测梯度 `[0,0,0,0]`）。
+
+**合法 PAD 编号的两个条件**：① 没人用过；② `< Embedding 行数`（否则 `IndexError`）。所以模型要 `+1` 行。
+
+##### 6.3 ★ 函数速查（作用 + 参数 + 返回）
+
+**`my_collate(batch)`** —— 把 N 条长度不一的样本拼成一个 batch（`DataLoader` 的 `collate_fn`）
+
+| 参数 | 类型 / 形状 | 含义 |
+| --- | --- | --- |
+| `batch` | `list`，长度 = `batch_size` | 每一项是 `__getitem__` 的返回值，形如 `([2,3,4,1], [2,3,4,5,1])` |
+
+**返回** `(x, y, x_len, y_len)`：
+
+| 返回项 | 形状 | 含义 |
+| --- | --- | --- |
+| `x` | `(B, L_en)` long, **GPU** | 英文编号，短的末尾补 `PAD_TOKEN_EN` |
+| `y` | `(B, L_fr)` long, **GPU** | 法文编号，同上 |
+| `x_len` | `(B,)` long, **CPU** | 英文真实长度（★ 必须 CPU，`pack` 的硬要求） |
+| `y_len` | `(B,)` long, **CPU** | 法文真实长度（当前用 `ignore_index` 代替，暂未使用） |
+
+> `L_en` / `L_fr` 取**这个 batch 内的最长**，不是全局 `MAX_LENGTH`（省显存）。
+> 传参时给**函数名不加括号**：`collate_fn=my_collate` ✓ / `my_collate()` ✗
+
+**`My_Dataset.__getitem__(idx)`** —— 返回**两个 list**（不是张量），长度可以不同
+
+**`my_dataloader(batch_size=1, shuffle=True)`** —— `batch_size` 一批几句、`shuffle` 是否打乱；返回 `DataLoader`（内部已挂 `collate_fn=my_collate`）
+
+**`EncoderRNN(input_size, hidden_size, embd_dim=256, pad_idx=None)`**
+
+| 参数 | 值 | 含义 |
+| --- | --- | --- |
+| `input_size` | **2804** = `english_words_count + 1` | ★ `+1` 是给 PAD 多开一行 |
+| `hidden_size` | 512 | GRU 隐藏维度 |
+| `embd_dim` | 256 | 词向量维度 |
+| `pad_idx` | **2803** | PAD 编号 → 那行不学梯度 |
+
+**`EncoderRNN.forward(input, lengths)`**
+
+| 参数 | 形状 | 含义 |
+| --- | --- | --- |
+| `input` | `(B, L)` long | 补齐的编号 |
+| `lengths` | `(B,)` long, **CPU** | 真实长度 |
+
+**返回** `(output, hidden)`：
+
+| 返回项 | 形状 | 用途 |
+| --- | --- | --- |
+| `output` | `(B, L, 512)` | 解码器的 **K 和 V**（PAD 位置填 0） |
+| `hidden` | `(1, B, 512)` | 解码器的**初始状态**（"中间语义"） |
+
+> 内部流程：`embedding` → **`pack_padded_sequence`** → `gru` → **`pad_packed_sequence`**
+> `enforce_sorted=False`：不用自己按长度降序排，PyTorch 排完会**自动还原顺序**
+> `total_length=input.size(1)`：让输出长度恒定，不随 batch 内容飘
+
+**`Decoder_Attention(hidden_size, output_size, embd_dim=256, pad_idx=None)`**
+
+| 参数 | 值 | 含义 |
+| --- | --- | --- |
+| `output_size` | **4346** = `french_words_count + 1` | ★ 同样 `+1` 给 PAD |
+| `pad_idx` | **4345** | |
+
+**`Decoder_Attention.forward(input, hidden, encoder_outputs, enc_mask=None)`**
+
+| 参数 | 形状 | 含义 |
+| --- | --- | --- |
+| `input` | `(B, 1)` long | **当前这一步**的目标词（`SOS` 开头） |
+| `hidden` | `(1, B, 512)` | 解码器状态，**充当 Q** |
+| `encoder_outputs` | `(B, L, 512)` | **K 和 V** |
+| `enc_mask` | `(B, L)` bool 或 `None` | `True`=真词，`False`=PAD |
+
+**返回** `(output, hidden, attn_weights)`：
+
+| 返回项 | 形状 | 含义 |
+| --- | --- | --- |
+| `output` | `(B, 4346)` | 每个样本的词表分布（★ 必须 `out(output.squeeze(1))`，不能 `output[0]`） |
+| `hidden` | `(1, B, 512)` | 更新后的状态 |
+| `attn_weights` | `(B, 1, L)` | 注意力权重，和 = 1（PAD 位精确 0） |
+
+**`one_train(encoder_rnn, decoder_rnn, encoder_optimizer, decoder_optimizer, criterion, x, y, x_len)`** —— 一次前向 + 一次参数更新
+
+| 参数 | 形状 | 含义 |
+| --- | --- | --- |
+| `x` | `(B, L_en)` | 英文编号 |
+| `y` | `(B, L_fr)` | 法文编号 |
+| `x_len` | `(B,)` | 英文真实长度 |
+| `criterion` | — | 必须 `CrossEntropyLoss(ignore_index=PAD_TOKEN_FR)` |
+
+**返回** `float`：平均 loss（`sum / y.shape[1]`）
+
+> 内部步骤：`zero_grad` → 推 `enc_mask` → 编码 → **循环时间步** → `loss/L` → `backward` → `clip` → `step`
+
+**`train()`** —— 无参（配置全在模块级常量里）。两重循环 + 三个累加器 + 每轮存档。
+
+**`evaluate(sentence, epoch=5)`** —— `sentence` 英文句子、`epoch` 用第几轮的权重；返回法文串（单句推理，无 PAD，`enc_mask` 传 `None`）
+
+##### 6.4 ★ 变量名速查（这批名字最容易搞混）
+
+| 名字 | 形状 | 到底是什么 |
+| --- | --- | --- |
+| `x` / `y` | `(B, L)` | 英文 / 法文**编号**（不是词向量） |
+| `x_len` / `y_len` | `(B,)` | 真实长度（CPU） |
+| `enc_mask` | `(B, L)` bool | 从 `x != PAD_TOKEN_EN` **现算**出来的 |
+| `enc_out` / `encoder_outputs` | `(B, L, 512)` | 编码器**每个位置**的输出 = 注意力要的 K/V |
+| `hidden` / `enc_hidden` | `(1, B, 512)` | 编码器**最后一个**状态 = 解码器初始状态 |
+| `inp` / `input_y` | `(B, 1)` | 解码器**当前步**输入 |
+| `out` / `decoder_output` | `(B, 4346)` | 当前步的词表分布 |
+| `B` / `L` | 标量 | batch 大小 / 补齐后的长度 |
+
+##### 6.5 实测数据
+
+**正确性（改造没改变数学）** —— 同一份权重下，batch 里每条样本的 loss == 单独跑的 loss：
+
+| 样本 | batch 里的 loss | 单独跑 | 一致? |
+| --- | --- | --- | --- |
+| 行0 | 8.420256 | 8.420251 | ✓ |
+| 行1 | 8.350683 | 8.350674 | ✓ |
+| 行2 | 8.358961 | 8.358958 | ✓ |
+
+**pack 有效**：同一句"batch 内 hidden" vs "单独跑 hidden" → 差 **4.6e-05**；去掉 pack → 差 **4.0e-01**（差 1 万倍）
+
+**mask 有效**：PAD 位置权重 **0.135 → 0.000**，真词权重和 **1.0000**
+
+**速度**：`batch=32` 每句 0.64 ms vs `batch=1` 12.85 ms → **快 20 倍**；每轮 0.7 分钟（原 9.8 分钟）
+
+**收敛**：前 300 步 loss **7.24 → 2.87**（降 60%）
+
+##### 6.6 ★ 三个"不报错但悄悄变差"的坑
+
+| 坑 | 症状 | 实测 |
+| --- | --- | --- |
+| **忘了 mask** | `hidden` 干净，但真词权重被稀释 | 5 词句补到 8 位，真词权重和只剩 **0.5568**；`context` 严格等于正确值 × 0.5568（**等比缩小**，不是被污染） |
+| **`masked_fill` 忘了 `~`** | 权重和仍是 1，但全给了 PAD | `[1,2,3]` + mask `[T,T,F]` → `[-inf,-inf,3.0]`（把真词填死了） |
+| **`unsqueeze(1)` 漏了** | **不报错**，但形状静默从 `(B,1,L)` 变成 `(B,B,L)` | 3 步之后在 `torch.cat` 才炸：`Expected size 1 but got size 3` |
+
+##### 6.7 改造前后对照
+
+| | 改造前 | 改造后 |
+| --- | --- | --- |
+| `__getitem__` 返回 | 张量 + `.to(device)` | **list**（长度可变） |
+| 组 batch | 默认 `collate_fn`（`stack`）→ 长度不同就报错 | `my_collate` 补齐 + 给长度 |
+| 编码器签名 | `forward(input, hidden)` | `forward(input, lengths)` |
+| 解码器签名 | `forward(input, hidden, encoder_outputs)` | `+ enc_mask=None` |
+| 取一步目标 | `y[0][i].view(-1)` → `(1,)` | `y[:, i]` → `(B,)` |
+| 取预测 | `topi.item()` | `argmax(1)` + `finished.all()` |
+| 输出层 | `self.out(output[0])` | `self.out(output.squeeze(1))` |
+| loss | 累加后直接 backward | **先 `/L` 再 backward** |
+| 损失函数 | `CrossEntropyLoss()` | `+ ignore_index=PAD_TOKEN_FR` |
+| 模型尺寸 | `Embedding(2803, 256)` | `Embedding(2804, 256, padding_idx=2803)` |
+
+> **⚠️ 旧 checkpoint 全部失效**（`Embedding` 从 2803 行变 2804 行），必须重训 —— 因为 `batch=32` 一轮只要 0.7 分钟，10 轮 7 分钟，代价可接受。
+
 ## 环境
 
 | 项 | 版本 / 说明 |
@@ -680,12 +872,12 @@ nlp/
 │   │                                           · My_Attention_Content（内容比对版，K 是每个词一个）
 │   └── 注意力步骤动画.html                     13 步交互动画：Seq2Seq+Attention 从编码到生成
 │                                               （单文件、零依赖，双击浏览器打开；← → 翻步）
-├── 英译法/                      Day06 P80–P95 Seq2Seq 英译法案例（训练跑通，5 轮到 92.5%）
-│   ├── translate.py                            数据清洗/预处理 → Dataset/DataLoader
-│   │                                           → EncoderRNN(GRU, 词表 2803)
+├── 英译法/                      Day06 P80–P95 Seq2Seq 英译法案例（batch=1 五轮 92.5% → batch=32 改造）
+│   ├── translate.py                            数据清洗/预处理 → Dataset + **my_collate（补齐）**
+│   │                                           → EncoderRNN（pack/unpack 跳过 PAD）
 │   │                                           → DecoderRNN_No_Attention（无注意力，课程 P91）
-│   │                                           → Decoder_Attention（★ 有注意力，自己实现，课程 P93–P95）
-│   │                                           → one_train / train / evaluate
+│   │                                           → Decoder_Attention（有注意力 + mask，自己实现）
+│   │                                           → one_train（按时间步循环）/ train / evaluate
 │   ├── data/eng-fra-v2.txt                     英法句对 63,594 行（3.2 MB，已提交）
 │   └── model/                                  encoder/decoder_rnn_{1..10}.pth（每轮 27.5 MB，已 gitignore）
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
@@ -1090,6 +1282,90 @@ Epoch [1/10], Step [3000/63594], print_avg_loss: 20.2607   ← 越来越大
 1. **`loss` 不降反升 = 学习率太大**（或梯度爆炸），第一反应就查 lr
 2. **抄教程的超参数要看配套的优化器**（SGD 的 0.01 ≠ Adam 的 0.01）
 3. 判断"训练是不是真的在学"：随机初始化的 loss 应该是 `ln(词表大小)`（本项目 = `ln(4345) ≈ 8.38`）
+
+### 13. `pack` 和 `mask` 不能互相替代 —— 它们修的是两台不同的机器（`英译法/translate.py` 改造时踩到）
+
+**以为"做了 pack 就不用 mask"（或反过来）是错的。** 两者作用在不同位置：
+
+| | 毛病 | 谁修 | 作用点 |
+| --- | --- | --- | --- |
+| 编码器 **GRU** | 多读几步 PAD → `hidden` 永久变脏 | **`pack`** | 读之前拦 |
+| 解码器 **softmax** | 多几个候选 → 真词权重被稀释 | **`mask`** | 归一化前拦 |
+
+**★ 决定性实验 A：mask 替代不了 pack**
+
+同一句话，只改"补到多长"，看 `hidden`：
+
+| 做法 | 与"不补"的差 |
+| --- | --- |
+| 补到 10，不 pack | **0.6442** |
+| ↑ 事后把输出 mask 成 0 | **0.6442** ← ★ 一点没变 |
+| ↑ 改用 pack | **0.00000** ← ✓ |
+
+> **`mask` 作用于"输出张量"，而 `hidden` 是 GRU 内部逐时间步累加出来的状态。**
+> **一旦读了 PAD，那一步已经走过了 —— 事后 mask 输出救不回状态。**
+
+**★ 决定性实验 B：pack 替代不了 mask**
+
+`pad_packed_sequence` 的输出**又变回带 PAD 的矩形**（因为下游 `bmm` 要求规整矩阵）：
+
+```
+pack 之后 .data             (11, 512)     ← 只有真实词（7+4）
+pad_packed_sequence 之后     (2, 7, 512)   ← ★ PAD 回来了，填 0
+```
+
+而行1（真实 4 词）的注意力：
+
+```
+不 mask: [0.0901, 0.1133, 0.1628, 0.3558, 0.0927, 0.0927, 0.0927]   真词和 0.7220
+带 mask: [0.1249, 0.1570, 0.2254, 0.4927, 0.0,    0.0,    0.0   ]   真词和 1.0000
+```
+
+**3 个 PAD 合计抢走 27.8% 的注意力。** 它们是 0 向量，但 **softmax 只看"有几个候选"，不管值是 0**。
+
+**★ 为什么不能"一直保持 packed"**：`PackedSequence` 不是 Tensor（`'PackedSequence' object has no attribute 'transpose'`），没有 batch 维、没有统一 L 维，**做不了 `bmm`**；PyTorch 也没有"变长分组 softmax"的原语。
+
+**顺带一个致命细节**：`PAD` 编号**不能用 0**。因为 `nn.Embedding(..., padding_idx=0)` 会把第 0 行冻成 0 且永远不给梯度，而本项目 `SOS=0` → **SOS 会被一起冻死**（实测梯度 `[0,0,0,0]`），解码器第一步就喂进全 0 垃圾。
+
+### 14. `masked_fill` 的两个手工细节都不能省，且**都不报错**（`英译法/translate.py` 踩到）
+
+```python
+score = score.masked_fill(~enc_mask.unsqueeze(1), float('-inf'))
+```
+
+**细节 1：`~`（取反）**
+
+`masked_fill` 填的是 **`True` 的位置**，而 mask 的约定是 `True`=真词，两者方向相反：
+
+```
+score [1.0, 2.0, 3.0]   mask [True, True, False]
+masked_fill(mask,  -inf) → [-inf, -inf, 3.0]    ← ✗ 把真词填死了
+masked_fill(~mask, -inf) → [1.0,  2.0,  -inf]   ← ✓
+```
+
+**细节 2：`unsqueeze(1)`**
+
+```python
+score    (B, 1, L)
+enc_mask (B, L)          ← 少了中间那一维
+```
+
+**漏了它会静默广播**，形状从 `(B,1,L)` 变成 `(B,B,L)`，**报错要等到 3 步之后的 `torch.cat`**：
+
+```
+① masked_fill 后  (3,1,8) → ★ (3,3,8)
+② softmax 后      (3,3,8)
+③ bmm → (3,3,512)
+④ cat(embedded(3,1,256), context(3,3,512))
+   → ✗ Sizes of tensors must match except in dimension 2. Expected size 1 but got size 3
+```
+
+**还有两个容易忽略的点**：
+
+- **`-inf` 而不是 `0`**：`softmax(0) = e⁰ = 1`，填 0 时 PAD 仍分到 **5.2%** 权重；填 `-inf` 才精确为 0
+- **必须在 softmax 之前**：先 softmax 再置 0，权重和变成 **0.9618**（归一化被破坏，因为分母已经把 PAD 算进去了）
+
+**边界**：整行都 mask → `softmax([-inf,-inf,-inf]) = [nan,nan,nan]`，NaN 会顺着梯度污染整个模型。
 
 ## 说明
 
