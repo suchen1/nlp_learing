@@ -22,7 +22,7 @@
 | Day03 | 文本规范 + RNN / LSTM / GRU | P36–P54 | ✅ 已完成 |
 | Day04 | 人名分类案例实战 | P55–P65 | ✅ 已完成（三模型对照：**GRU 88.2% > LSTM 87.3% > RNN 76.0%**） |
 | Day05 | 注意力机制 | P66–P79 | ✅ 已完成（代码见 `注意力机制/`：位置打分版 + 内容比对版对照） |
-| Day06 | Seq2Seq 英译法案例（上） | P80–P95 | 🟡 进行中（**P80–P92 已看完**，`英译法/translate.py` 写到"无 Attention 解码器测试"；下一个 P93 = 有 Attention 解码器思路分析） |
+| Day06 | Seq2Seq 英译法案例（上） | P80–P95 | 🟡 进行中（P80–P92 视频已看完；**有 Attention 解码器自己实现**并训练到第 4 轮，抽样正确率 **33% → 82.5%**，见 `英译法/`） |
 | Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | ⬜ 未开始 |
 | Day08 | Transformer 逐层实现（上） | P110–P125 | ⬜ 未开始 |
 | Day09 | Transformer 逐层实现（下） | P126–P143 | ⬜ 未开始 |
@@ -506,6 +506,75 @@ attention(dec_h, enc_out, enc_out)   # 交叉注意力：q 传解码器  → 分
 
 **训练时循环其实不是必须的**：一次喂整句 `decoder(dec_input, hidden)` 与逐步循环**结果完全一致**（实测最大差异 `6.6e-7`），因为 GRU 本来就是从左到右处理。循环留给推理用。
 
+### Day06 Seq2Seq 英译法案例（P80–P95，进行中）
+
+代码：[`英译法/translate.py`](英译法/translate.py) ｜ 数据：[`英译法/data/eng-fra-v2.txt`](英译法/data/eng-fra-v2.txt)
+
+#### 1. 数据与词表
+
+| 项 | 值 |
+| --- | --- |
+| 句对 | **63,594** 行（英文 ↔ 法文，tab 分隔） |
+| 英文词表 | **2803**（含 SOS=0 / EOS=1，真实词从 2 开始） |
+| 法文词表 | **4345** |
+| 句长 | 英文 3~9 词、法文 2~9 词，均值 6 词 → `MAX_LENGTH=10` 刚好够 |
+
+**验证过**：所有行都有 tab、规范化后无空句、`split(' ')` 不产生空串；`nn.Embedding(count, dim)` 的合法编号恰好 `0 ~ count-1` ✓
+
+#### 2. 模型结构（自己实现的有注意力解码器）
+
+```python
+EncoderRNN:  Embedding(2803, 256) → GRU(256, 512)
+Decoder_Attention:
+    Embedding(4345, 256) → Dropout(0.1)
+    score = bmm(hidden^T, encoder_outputs^T) / √512      # ★ Q·K，不是课程的位置打分
+    attn_weights = softmax(score, -1)
+    context = bmm(attn_weights, encoder_outputs)
+    combined = cat(embedded, context) → attn_combine(768→512) → relu
+    GRU(512, 512) → Linear(512, 4345)
+```
+
+**关键设计**：用 `attn_combine` 把 768 维压回 512，所以 **GRU 的 `input_size` 保持 512** 不用变宽（比官方新版教程的做法更干净）。
+
+#### 3. ★ 实验结果：正确率随轮次的变化
+
+**评测方法**：200 句固定测试集（seed 固定，各轮共用），**匹配任一参考译法即算正确**（其中 70 句是"一对多"）。
+
+| 轮次 | 正确率 | 相比上一轮 |
+| --- | --- | --- |
+| 第 1 轮 | 33.0% | — |
+| 第 2 轮 | 59.5% | **+26.5** |
+| 第 3 轮 | 72.5% | **+13.0** |
+| **第 4 轮** | **82.5%** | **+10.0** |
+
+**33% → 82.5%，4 轮提升 2.5 倍**；提升幅度递减（+26.5 → +13 → +10），已进入收益饱和区。
+
+**观察到的现象：**
+
+- 大部分句子在**第 2 轮**就学会了（第 1 轮只学到最基础的对应关系）
+- 顽固失败案例：`i am from shizuoka .` → `je suis de suis .`（4 轮全错）—— **罕见词退化成高频词**，典型的长尾问题
+- `we re in love .` → `nous sommes en .`（不是任何参考答案）—— 因为这句在训练集里**有 3 个不同的法语答案**，模型学成了"混合体"
+
+#### 4. ★ 超参数：`lr` 是最关键的一项
+
+| 配置 | 1000 步后的表现 |
+| --- | --- |
+| **Adam lr=0.01** | **发散**（loss 8.87 → 22.22，越训越大） |
+| Adam lr=0.001 | 正常（8.4 → 3.06） |
+| **Adam lr=0.0001（最终采用）** | 稳但慢，需要更多轮次补偿 |
+
+**训练 10 轮的实际配置**：`lr=0.0001`、`batch_size=1`、`teacher_forcing_ratio=0.5`、`epoch=10`，约 **10.7 ms/步** → 完整 10 轮约 **1.9 小时**。
+
+详见踩坑记录第 12 条。
+
+#### 5. 训练循环的三个易错点（都已实测）
+
+| 事情 | 结论 |
+| --- | --- |
+| **SOS 与右移** | 输入 `[SOS] + y[:-1]`，目标 `y`。不塞 SOS 时 loss 反而更低（抄输入更容易），但推理崩 —— 见踩坑记录第 11 条 |
+| **decoder 里不能加 softmax** | `CrossEntropyLoss` 自带 `log_softmax`，加了梯度只剩 16% —— 见踩坑记录第 10 条 |
+| **推理时的 batch 维** | `evaluate` 里 `input_tensor` 必须 `.unsqueeze(0)`，否则 `embedding(1维)` → 2 维 → GRU 报 `For unbatched 2-D input, hx should also be 2-D but got 3-D` |
+
 ## 环境
 
 | 项 | 版本 / 说明 |
@@ -608,11 +677,14 @@ nlp/
 │   │                                           · My_Attention_Content（内容比对版，K 是每个词一个）
 │   └── 注意力步骤动画.html                     13 步交互动画：Seq2Seq+Attention 从编码到生成
 │                                               （单文件、零依赖，双击浏览器打开；← → 翻步）
-├── 英译法/                      Day06 P80–P92 Seq2Seq 英译法案例（进行中，写到无 Attention 解码器）
-│   ├── translate.py                            P84–P92：数据清洗/预处理 → Dataset/DataLoader
-│   │                                           → EncoderRNN(GRU, 词表2803) → DecoderRNN_No_Attention
-│   │                                           （GRU, 词表4345, embd 256, hidden 512, 带 dropout）
-│   └── data/eng-fra-v2.txt                     英法句对 63,594 行（3.2 MB，已提交）
+├── 英译法/                      Day06 P80–P95 Seq2Seq 英译法案例（训练跑通，4 轮到 82.5%）
+│   ├── translate.py                            数据清洗/预处理 → Dataset/DataLoader
+│   │                                           → EncoderRNN(GRU, 词表 2803)
+│   │                                           → DecoderRNN_No_Attention（无注意力，课程 P91）
+│   │                                           → Decoder_Attention（★ 有注意力，自己实现，课程 P93–P95）
+│   │                                           → one_train / train / evaluate
+│   ├── data/eng-fra-v2.txt                     英法句对 63,594 行（3.2 MB，已提交）
+│   └── model/                                  encoder/decoder_rnn_{1..10}.pth（每轮 27.5 MB，已 gitignore）
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
 ├── __pycache__/               Python 字节码缓存（生成物，已 gitignore）
 ├── .gitignore                 挡大文件 + runs/ + __pycache__
@@ -980,6 +1052,41 @@ loss = F.cross_entropy(logits.view(-1, FRENCH_VOCAB), y.view(-1))
 **注意课程的原版代码喂的是 `y[0][i]`（没有 SOS）** —— 抄课程时要自己补上这一步。
 
 **教训**：**"训练时要喂的输入"和"推理时要喂的输入"必须一致**。训练时没出现过的符号，推理时给它就是垃圾进垃圾出。
+
+### 12. Adam 配 `lr=0.01` 会发散：loss 越训越大（`英译法/translate.py` 踩到）
+
+现象：跑了几百步后，**loss 不是下降而是往上走** ——
+
+```
+Epoch [1/10], Step [1000/63594], print_avg_loss: 13.4108
+Epoch [1/10], Step [2000/63594], print_avg_loss: 19.3603
+Epoch [1/10], Step [3000/63594], print_avg_loss: 20.2607   ← 越来越大
+```
+
+**复现与定位**（同一份代码、同一个初始化，各跑 1000 步，loss 统一按"每 token 平均"报告）：
+
+| 配置 | 第100步 | 第500步 | 第1000步 | 结论 |
+| --- | --- | --- | --- | --- |
+| **Adam lr=0.01** | 8.87 | 15.85 | **22.22** | ✗ **发散** |
+| Adam lr=0.001 | 4.85 | 3.33 | **3.06** | ✓ 正常 |
+| Adam lr=0.0001 | 更慢 | — | — | ✓ 稳，但要多训几轮 |
+
+**原因**：`lr=0.01` 对 **Adam** 来说大了约 10 倍（Adam 常用 `1e-3`）。Adam 有自适应步长，参数被一点点推离有效区域 → loss 越训越大。
+
+**注意：官方教程用的是 `lr=0.01`，但配的是 `SGD`** —— 换 Adam 就必须改小。
+
+**顺带一个易误判的点**：`loss` 用 sum 还是 mean 去 `backward`？
+
+- **实测 Adam 下两者几乎没差别**（4.85→3.06 vs 4.86→3.10）：Adam 的更新是 `m/(√v+ε)`，梯度整体乘常数时 `m` 和 `√v` 同比例变，**商不变**
+- **但 SGD 下差 ~7 倍**（梯度范数 59.33 vs 7.77）→ 等于 lr 放大 7 倍
+- 所以"先取平均"不是数学上更正确（序列 NLL 本来就是求和），而是**工程上更稳 + 上 batch 后天然按 token 平均**
+
+**唯一必须改的是口径一致**：`return loss.item()/L` 却用 `loss`（sum）去 backward，会让"你看到的 loss"和"实际用的梯度"不是一个东西 —— 同类问题见踩坑记录第 9 条。
+
+**教训**：
+1. **`loss` 不降反升 = 学习率太大**（或梯度爆炸），第一反应就查 lr
+2. **抄教程的超参数要看配套的优化器**（SGD 的 0.01 ≠ Adam 的 0.01）
+3. 判断"训练是不是真的在学"：随机初始化的 loss 应该是 `ln(词表大小)`（本项目 = `ln(4345) ≈ 8.38`）
 
 ## 说明
 
