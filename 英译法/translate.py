@@ -324,8 +324,14 @@ def one_train(encoder_rnn,decoder_rnn,encoder_optimizer,decoder_optimizer,criter
     decoder_optimizer.step() # 更新解码器参数
     return loss.item()  # 已经是平均损失
 
-def train():
-    """训练模型"""
+def train(total_epochs=None, resume_from=0):
+    """训练模型
+
+    :param total_epochs: 总共要训到第几轮（默认用全局 epoch）
+    :param resume_from:  0 = 从头训；
+                         10 = 加载 model/*_10.pth 接着训，从第 11 轮开始存
+    """
+    total_epochs = epoch if total_epochs is None else total_epochs
     dataloader = my_dataloader(batch_size=BATCH_SIZE)                                     # ★ batch=32
     # ★ input_size 要 +1：词表末尾多出一行给 PAD；pad_idx 让那行不参与梯度
     encoder_rnn = EncoderRNN(input_size=english_words_count + 1, embd_dim=256,
@@ -334,9 +340,22 @@ def train():
                                     embd_dim=256, pad_idx=PAD_TOKEN_FR).to(device)
     encoder_optimizer = optim.Adam(encoder_rnn.parameters(), lr=my_lr)
     decoder_optimizer = optim.Adam(decoder_rnn.parameters(), lr=my_lr)
+
+    # ★ 断点续训：把已有权重灌进【同一个】模型对象，然后接着循环
+    if resume_from > 0:
+        enc_path = f"./model/encoder_rnn_{resume_from}.pth"
+        dec_path = f"./model/decoder_rnn_{resume_from}.pth"
+        encoder_rnn.load_state_dict(torch.load(enc_path, map_location=device))
+        decoder_rnn.load_state_dict(torch.load(dec_path, map_location=device))
+        print(f"★ 已加载第 {resume_from} 轮权重 → 从第 {resume_from + 1} 轮继续"
+              f"（目标第 {total_epochs} 轮）")
+    else:
+        print(f"★ 从头训练，共 {total_epochs} 轮")
+
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_FR)                            # ★ 跳过 PAD
     loss_list, epoch_losses = [], []                                                      # ★ 两种粒度分开存
-    for e in range(epoch):
+    for e in range(total_epochs - resume_from):        # ★ 只跑剩下的轮数
+        real_epoch = resume_from + e + 1               # ★ 真实轮次编号（用于打印和存档）
         print_total_loss = 0.0
         plot_total_loss = 0.0
         total_loss = 0.0
@@ -348,7 +367,7 @@ def train():
             plot_total_loss += loss
             total_loss += loss
             if (i + 1) % print_interval_num == 0:
-                print(f"Epoch [{e+1}/{epoch}], Step [{i+1}/{len(dataloader)}], "
+                print(f"Epoch [{real_epoch}/{total_epochs}], Step [{i+1}/{len(dataloader)}], "
                       f"loss: {print_total_loss / print_interval_num:.4f}, "
                       f"Time: {time.time() - start_time:.2f}s")
                 print_total_loss = 0.0
@@ -357,9 +376,9 @@ def train():
                 plot_total_loss = 0.0
         avg_loss = total_loss / len(dataloader)
         epoch_losses.append(avg_loss)                                                     # 粗粒度：每轮（★ 别塞进 loss_list）
-        print(f"Epoch [{e+1}/{epoch}], Average Loss: {avg_loss:.4f}")
-        torch.save(encoder_rnn.state_dict(), f"./model/encoder_rnn_{e+1}.pth")
-        torch.save(decoder_rnn.state_dict(), f"./model/decoder_rnn_{e+1}.pth")
+        print(f"Epoch [{real_epoch}/{total_epochs}], Average Loss: {avg_loss:.4f}")
+        torch.save(encoder_rnn.state_dict(), f"./model/encoder_rnn_{real_epoch}.pth")
+        torch.save(decoder_rnn.state_dict(), f"./model/decoder_rnn_{real_epoch}.pth")
     # 绘制损失曲线：细粒度/粗粒度分开画
     plt.figure(figsize=(10, 4))
     plt.subplot(1, 2, 1)
@@ -414,9 +433,7 @@ if __name__ == "__main__":
     # test_encoder()
     # test_decoder_No_Attention()
     # test_decoder_Attention()
-    train()                 # ★ 先跑这个（batch=32，一轮约 0.7 分钟）
-
-    # 训练完再测翻译（checkpoint 必须是新架构训练出来的）
-    # test_sentences = ["we re in love .", "i am hungry .", "i am a student ."]
-    # for sentence in test_sentences:
-    #     print(f"English: {sentence} -> French: {evaluate(sentence)}")
+     train(50,10)  # ★ 从第 11 轮开始训到第 30 轮       
+    #  test_sentences = ["we re in love .", "i am hungry .", "i am a student ."]
+    #  for sentence in test_sentences:
+    #      print(f"English: {sentence} -> French: {evaluate(sentence,10)}")
