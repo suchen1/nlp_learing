@@ -396,8 +396,12 @@ def train(total_epochs=None, resume_from=0):
     plt.show()
     return loss_list
 
-def evaluate(sentence, epoch=5):
-    """评估模型，翻译输入句子（单句推理：batch=1，没有 PAD，所以 mask 可以不传）"""
+def evaluate(sentence, epoch=50):
+    """评估模型，翻译输入句子（单句推理：batch=1，没有 PAD，所以 mask 可以不传）
+
+    :param epoch: 用 model/ 里第几轮的权重（当前只保留了第 50 轮；
+                  以后重训到别的轮次，记得改这个默认值）
+    """
     encoder_rnn = EncoderRNN(input_size=english_words_count + 1, embd_dim=256,
                              hidden_size=512, pad_idx=PAD_TOKEN_EN).to(device)
     decoder_rnn = Decoder_Attention(hidden_size=512, output_size=french_words_count + 1,
