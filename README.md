@@ -731,6 +731,11 @@ train(total_epochs=30)                     # 从头训 30 轮
 train(total_epochs=50, resume_from=12)     # 加载第 12 轮，训到 50 轮
 ```
 
+> 💡 **权重文件会一直堆**：每轮 27.5 MB，训 50 轮就是 **1.35 GB**。
+> 只要最终模型的话，训完保留 `encoder_rnn_50.pth` / `decoder_rnn_50.pth`，其余删掉即可
+> （`model/` 已在 `.gitignore` 里，删除不影响仓库）。
+> **删之前先验证留下的那个能加载、能翻译** —— 别删完了才发现留下的是坏的。
+
 **`evaluate(sentence, epoch=5)`** —— `sentence` 英文句子、`epoch` 用第几轮的权重；返回法文串（单句推理，无 PAD，`enc_mask` 传 `None`）
 
 ##### 6.4 ★ 变量名速查（这批名字最容易搞混）
@@ -980,7 +985,8 @@ nlp/
 │   │                                           → Decoder_Attention（有注意力 + mask，自己实现）
 │   │                                           → one_train（按时间步循环）/ train / evaluate
 │   ├── data/eng-fra-v2.txt                     英法句对 63,594 行（3.2 MB，已提交）
-│   └── model/                                  encoder/decoder_rnn_{1..10}.pth（每轮 27.5 MB，已 gitignore）
+│   └── model/                                  encoder/decoder_rnn_**50**.pth（只留最终轮 27.5 MB，已 gitignore；
+│                                               1~49 轮共 1.35 GB 已清理，省 1.3 GB）
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
 ├── __pycache__/               Python 字节码缓存（生成物，已 gitignore）
 ├── .gitignore                 挡大文件 + runs/ + __pycache__
