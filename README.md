@@ -23,9 +23,9 @@
 | Day04 | 人名分类案例实战 | P55–P65 | ✅ 已完成（三模型对照：**GRU 88.2% > LSTM 87.3% > RNN 76.0%**） |
 | Day05 | 注意力机制 | P66–P79 | ✅ 已完成（代码见 `注意力机制/`：位置打分版 + 内容比对版对照） |
 | Day06 | Seq2Seq 英译法案例（上） | P80–P95 | ✅ **已完成**（P80–P92 视频 + P93–P95 **自己实现**的有 Attention 解码器；batch=1 五轮 92.5% → 改造成 **batch=32（pad+pack+mask）** 后 15 轮即到 **96.0%**、峰值 **98.5%**，同样时间可多训 7 倍轮次，见 `英译法/`） |
-| Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | 🟡 进行中（**P96–P106 已看完**，下一个 P107）。P96–P104 的内容此前已**自己实现**（注意力解码器 / 训练 / 预测），P105 张量图 + P106 Transformer 由来为纯理论 |
-| Day08 | Transformer 逐层实现（上） | P110–P125 | ⬜ 未开始 |
-| Day09 | Transformer 逐层实现（下） | P126–P143 | ⬜ 未开始 |
+| Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | ✅ **已完成**。P96–P104 的内容此前已**自己实现**（注意力解码器 / 训练 / 预测），P105 张量图 + P106 Transformer 由来为纯理论，P107–P109 Transformer 架构（编码器–解码器骨架） |
+| Day08 | Transformer 逐层实现（上） | P110–P125 | ✅ **已完成**（`transformer架构/dm01`、`dm02`：词嵌入 / 位置编码 / 三角矩阵 / 掩码 / 注意力 / 多头 / FFN） |
+| Day09 | Transformer 逐层实现（下） | P126–P143 | ✅ **已完成**（`dm02`~`dm09`：LayerNorm / 子层 / 编码器 / 解码器 / 输出 / 整体；完整模型 **45,677,544 参数 / 174.25 MB**，通过因果性·位置编码·padding·梯度四项行为测试） |
 | Day10 | Fasttext 优化 + 预训练模型 + Transformers 库 | P144–P160 | ⬜ 未开始 |
 | Day11 | Transformers 实战：pipeline 与自动模型 | P161–P172 | ⬜ 未开始 |
 | Day12 | 迁移学习：BERT / ELMo / GPT | P173–P189 | ⬜ 未开始 |
@@ -831,9 +831,9 @@ train(total_epochs=50, resume_from=12)     # 加载第 12 轮，训到 50 轮
 
 **剩余 2.5% 的错误**：① "一对多"语料（一句英文多个法语答案，模型只能给折中）；② 罕见词长尾；③ 超长句被 `max_len` 截断 —— 都是**数据固有难度**，不是模型 bug。
 
-### Day07 英译法案例（下）+ Transformer 登场（P96–P109，进行中）
+### Day07 英译法案例（下）+ Transformer 登场（P96–P109）
 
-已看完 **P96–P106**，下一个 P107。
+已全部看完 **P96–P109**。P96–P104 的内容在学这一段之前就已经自己实现过，所以是"回头对一遍"。
 
 #### 1. P96–P104 与自己实现的对应关系
 
@@ -875,6 +875,313 @@ x (B,L) → embedding (B,L,256) → pack (.data = Σlens, 256) → gru → (Σle
 | **固定长度瓶颈** | 无论源句多长都压成一个定长向量 | 同上；注意力把"一个向量"换成"每个词一个向量 + 动态加权"，才是质变 |
 
 > **一句话**：**RNN 是"串行 + 压成定长"，Transformer 是"并行 + 每步都能看到全部"** —— 自注意力就是把 Day05 学的注意力机制从"解码器→编码器"推广成"每个词都能和所有词算注意力"。
+
+#### 4. P107–P109 Transformer 架构总览
+
+三集是纯理论，但正好是后面 34 集的骨架（论文 Figure 1）：
+
+```
+源句 ──► 词嵌入 ──► + 位置编码 ──► 编码器 ×6 ─────────────────┐
+                                                              │ memory
+目标句 ─► 词嵌入 ──► + 位置编码 ──► 解码器 ×6 ──► Linear ──► 词表分数
+                                    ▲                         │
+                                    └─────────────────────────┘
+                                      （每层用一次交叉注意力）
+```
+
+| 子层 | 编码器层 | 解码器层 | Q / K / V |
+| --- | --- | --- | --- |
+| 自注意力 | ✓ | ✓（**带因果掩码**） | 都是自己 |
+| 交叉注意力 | ✗ | ✓ | Q = 解码器，K/V = 编码器输出 |
+| 前馈网络 | ✓ | ✓ | — |
+
+> **一句话**：**编码器负责"读懂原文"，解码器负责"边写边查原文"。**
+
+---
+
+### Day08 Transformer 逐层实现（上）：词嵌入 / 位置编码 / 注意力 / 前馈（P110–P125）
+
+代码在 **`transformer架构/`**（曾误拼为 `transfomer架构`，已改名）：
+
+| 文件 | 内容 | 对应分集 |
+| --- | --- | --- |
+| `dm01_input.py` | `Embedding`、`PositionalEncoding` | P111 / P114–P115 |
+| `dm02_encoder_element.py` | `dm01_test_triu`、`attention`、`Multi_Head_Attention`、`PositionwiseFeedForward`、`LayerNorm` | P116–P125（+P126） |
+| `trace_utils.py` | `trace`（树形打印层级 + 形状）、`param_summary`、`Wrap` | 自建工具 |
+
+#### 1. 注意力四步与形状链
+
+```
+① 算分数   scores = Q·Kᵀ / √d_k
+② 归一化   attn   = softmax(scores)
+③ 加权求和 out    = attn · V
+④ 融合     out    = W_o · out        （即 Multi_Head_Attention.linear_out）
+```
+
+**多头之后的完整形状链（B=2, L=10, d_model=512, h=8, d_k=64）：**
+
+```
+(B, L, 512) ─Linear→ ─view(B,-1,8,64)→ (B,L,8,64) ─transpose(1,2)→ (B,8,L,64)
+Q·Kᵀ ─→ scores (B,8,L,L) ─softmax→ attn (B,8,L,L)
+attn·V ─→ (B,8,L,64) ─transpose+contiguous+view→ (B,L,512) ─Linear→ (B,L,512)
+```
+
+| 细节 | 说明 |
+| --- | --- |
+| `transpose` 只改 stride，不改内存 | 后面要 `.view()` 必须先 `.contiguous()`（`.reshape()` 等价于两者组合） |
+| `8 × 64 = 512` | 分头只是"切"，不是"压缩"，`reshape` 回 `d_model` 无额外计算 |
+
+#### 2. 多头 vs 单头：参数量一样，差在"几个 softmax"
+
+| | 单头 | 多头（h=8） |
+| --- | --- | --- |
+| 参数量 | 1,050,624 | 1,050,624（**完全相同**） |
+| 计算量 | 相同 | 相同 |
+| 注意力矩阵个数 | **1 个** `(L,L)` | **8 个** `(L,L)` |
+| softmax 次数 | **1 次** | **8 次** |
+
+**关键验证**：`Σ score_i = score_single × √8`（最大偏差 **1.43e-06**），但
+
+```
+softmax(Σ score_i) ≠ Σ softmax(score_i)      实测最大差 0.3299，平均差 0.0969
+```
+
+> **★ 不能"先把 8 个头的分数加起来再 softmax"** —— 那样就退化成单头了。
+> **多头的价值不在参数量，而在"同时用 8 套不同的相似度度量看同一句话"。**
+
+#### 3. 为什么必须有 `linear_out`（`W_o`）
+
+| 理由 | 实测证据 |
+| --- | --- |
+| **8 个头量纲不同** | 各头输出 std 在 **0.094 ~ 3.157** 之间（差 **33 倍**）；残差 `x + MHA(x)` 要求同量纲 |
+| **不加 `W_o` 时每个头只影响自己的 64 维** | 不加：只有 `64/512` 个维度变化；加了：`512/512` 全变 |
+
+（`W_o` 若是块对角矩阵也会退化成"各管各的"，所以它必须是全连接混合。）
+
+#### 4. 8 个头都看全部 512 维，但每个只输出 64 维
+
+```python
+self.linear_q = nn.Linear(512, 512)      # 一个矩阵
+# 分头时 Wq[0:64, :] 就是第 0 个头的投影 (64, 512)
+# 8 个 (64,512) 叠起来正好是 (512,512)
+```
+
+**实测：8 个独立的 `Linear(512→64)` 与 1 个 `Linear(512→512)` + 切分，输出与参数量完全一致。**
+
+> **★ "多头"不是"把输入切成 8 份各看 64 维"，而是"8 套 `(64,512)` 投影，每套都看全部 512 维"。**
+
+#### 5. 位置编码：为什么是 `x + pe` 而不是拼接
+
+| 做法 | 维度 | 问题 |
+| --- | --- | --- |
+| 拼接 | `2×d_model` | 后面所有层维度都要改 |
+| **相加** | `d_model` | ✓ 论文选这个：位置信息"叠加"在语义向量上，不改维度 |
+
+**⚠️ 量级提醒**：加了 `×√d_model` 后，embedding 的 std ≈ **18.05**，位置编码 std ≈ **0.59** ——
+**位置编码只占 3.3%**。它不"主导"语义，作用是给每个位置一个**可区分的微小偏移**。
+
+---
+
+### Day09 Transformer 逐层实现（下）：规范化 / 编码器 / 解码器 / 整体拼装（P126–P143）
+
+| 文件 | 内容 | 对应分集 |
+| --- | --- | --- |
+| `dm02_encoder_element.py` | `LayerNorm`（自定义 `a_2`/`b_2`） | P126–P127 |
+| `dm03_encoder_sublayer.py` | `SublayerConnection` | P129–P130 |
+| `dm04_encoder_layer.py` | `EncoderLayer` | P131–P132 |
+| `dm05_encoder.py` | `Encoder`（`clones` + 末尾 norm） | P133 |
+| `dm06_decoder_layer.py` | `DecoderLayer`（3 个子层） | P134–P135 |
+| `dm07_decoder.py` | `Decoder` | P136 |
+| `dm08_output.py` | `Output`（Linear，**不接 softmax**） | P137–P138 |
+| `dm09_transformer.py` | `Transformer` + `make_model` + `use_transformer` | P139–P141 / P143 |
+
+#### 1. 三种注意力：一张表说清
+
+| 注意力 | Q 来自 | K/V 来自 | 分数矩阵 | 掩码 |
+| --- | --- | --- | --- | --- |
+| **编码器自注意力** | `x` | `x`（同源） | **方阵** `(B,h,L_src,L_src)` | 只要 padding |
+| **解码器自注意力** | `x` | `x`（同源） | **方阵** `(B,h,L_tgt,L_tgt)` | **因果 + padding** |
+| **交叉注意力** | `x`（解码器） | `memory`（编码器） | **矩形** `(B,h,L_tgt,L_src)` | 只要 padding |
+
+**交叉注意力为什么不要因果掩码**：K/V 是**已完整确定的源句**，"未来"这个概念只在"自己正在逐词生成"的那一侧才存在。
+
+#### 2. 交叉注意力的维度要求
+
+```
+q (B,L_tgt,512) @ kᵀ (B,512,L_src) = scores (B,L_tgt,L_src)   ← 512 被吃掉
+attn (B,L_tgt,L_src) @ v (B,L_src,512) = out (B,L_tgt,512)   ← L_src 被吃掉
+```
+
+| 维度 | 要求 |
+| --- | --- |
+| `B` | 三者必须相同 |
+| `d_model` | Q/K/V 必须相同（投影层 `in_features` 都是它） |
+| `L_tgt` / `L_src` | **可以不同** |
+| `d_k` | Q 和 K 必须相同（点积要求） |
+
+**实测**：`x (2,3,512)` + `memory (2,4,512)` → 输出 `(2,3,512)`，分数矩阵 `(2,8,3,4)`。
+
+#### 3. ★ 掩码的三个坑
+
+**坑 1：`tgt_mask` 用 `torch.ones` → 偷看未来**
+
+把 `tgt` 最后一个词换掉，看位置 0 的输出变多少：
+
+| 掩码 | 位置 0 差异 | 结论 |
+| --- | --- | --- |
+| `torch.ones(...)` | **0.111009** | ❌ 解码器看到了未来 |
+| `tril(ones)` | **0.000000** | ✓ 因果正确 |
+
+难发现的原因：不报错，训练 loss 还会异常地低（学会抄答案），推理时完全不会翻译。
+
+**坑 2：`src_mask` 写成 `(B, L_src, L_src)` → `L_src ≠ L_tgt` 时崩**
+
+同一个 `src_mask` 要喂**两个地方**：
+
+| `src_mask` 形状 | 编码器自注意力 `(B,h,L_src,L_src)` | 交叉注意力 `(B,h,L_tgt,L_src)` | 通用？ |
+| --- | --- | --- | --- |
+| `(B, L_src, L_src)` | ✓ | ❌ 崩 | ✗ |
+| `(B, L_tgt, L_src)` | ❌ 崩 | ✓ | ✗ |
+| **`(B, 1, L_src)`** | ✓ | ✓ | **✓ 唯一通用** |
+
+（demo 里 `(2,10,10)` 能跑，只因 `L_src == L_tgt == 10` 碰巧相等。）
+
+**坑 3：掩码禁掉"整行" → NaN 扩散到全序列**
+
+| 做法 | 结果 |
+| --- | --- |
+| 只禁 key 方向 `mask[:, :, pad] = 0` | ✓ 其他位置输出不变 |
+| 连 query 行也禁 `mask[:, pad, :] = 0` | ❌ **全序列 NaN** |
+
+**原因**：某行全 `-inf` → 该行 softmax = NaN → 下一层它作为 K/V → 所有位置都 NaN。
+**PAD 位置自己那行不用禁**，它的输出是垃圾没关系，loss 里用 `ignore_index` 忽略即可。
+
+#### 4. 完整模型与参数分布
+
+```python
+model = make_model(src_vocab=1000, tgt_vocab=1000, N=6, d_model=512, d_ff=2048, heads=8)
+# 45,677,544 参数（174.25 MB float32）
+```
+
+| 部件 | 参数量 | 算式 |
+| --- | --- | --- |
+| 一个 `Multi_Head_Attention` | 1,050,624 | 4 × (512×512 + 512) |
+| 一个 `PositionwiseFeedForward` | **2,099,712** | (512×2048+2048) + (2048×512+512) |
+| 一个 `EncoderLayer` | 3,152,384 | 105 万 + 210 万 + 2×1,024 |
+| 一个 `DecoderLayer` | 4,204,032 | 105 万×2 + 210 万 + 3×1,024 |
+| 合计（N=6, vocab=1000） | **45,677,544** | — |
+
+> **★ FFN 参数量是注意力的 2 倍** —— 很多人以为注意力是大头，其实 `512×2048×2` 更重。
+
+#### 5. ★ `make_model` 最容易漏的一步：位置编码
+
+```python
+# ❌ 错：只有 embedding
+src_embed = nn.Sequential(Embedding(src_vocab, d_model))
+
+# ✅ 对：embedding + 位置编码打包
+src_embed = nn.Sequential(Embedding(src_vocab, d_model),
+                          PositionalEncoding(d_model, max_len=100, dropout=dropout))
+```
+
+**漏了会怎样**：Transformer 所有子层都**位置对称**（自注意力、FFN、LayerNorm、残差逐元素），
+所以整个编码器满足 `enc(perm(x)) = perm(enc(x))`：
+
+| `src_embed` 组成 | 换词序后输出最大差 | 能区分词序 |
+| --- | --- | --- |
+| 只有 `Embedding` | **0.000001** | ❌ 完全分不出 |
+| `Sequential(Embedding, PositionalEncoding)` | **0.522509** | ✓ |
+
+> **★ 这个 bug 不报错，只会让模型把"我爱你"和"你爱我"当成一回事。**
+
+**自检代码（建议常备）：**
+
+```python
+ids = torch.tensor([[5, 7, 9, 11]]);  perm = torch.tensor([2, 0, 3, 1])
+h1 = model.encoder(model.src_embed(ids))
+h2 = model.encoder(model.src_embed(ids[:, perm]))
+diff = (h2[0] - h1[0][perm]).abs().max()      # 应 > 1e-3
+```
+
+#### 6. 四项行为测试（能跑 ≠ 对）
+
+| # | 测什么 | 方法 | 实测结果 |
+| --- | --- | --- | --- |
+| 1 | **因果性** | 改 `tgt` 末词，看位置 0 变不变 | 正确掩码 `0.000000` ✓ / 全 1 掩码 `0.111` ✗ |
+| 2 | **位置编码** | 打乱 `src` 词序，看编码器输出变不变 | `0.2456` ✓ |
+| 3 | **padding mask** | 改一个被 mask 的词，看其他位置变不变 | 只禁 key：不变 ✓；禁整行：NaN ✗ |
+| 4 | **梯度** | `loss.backward()` 后算梯度范数 | `loss=3.4218`，范数 `2.4852` ✓ |
+
+#### 7. 初始化：那三行 Xavier 要不要写
+
+```python
+for p in model.parameters():
+    if p.dim() > 1:                    # 只挑 2 维以上（跳过 bias，bias 必须为 0）
+        nn.init.xavier_uniform_(p)
+```
+
+**出处**：Annotated Transformer 原注释是 `# This was important from their code.` ——
+**"their code" 指官方参考实现，不是论文附录**（论文正文只写了 Adam 的 β 和 warmup=4000）。
+
+| 初始化 | Embedding std | `src_embed` 输出 std | **`encoder` 输出 std** | 150 步后 loss |
+| --- | --- | --- | --- | --- |
+| 不写 | 0.9694 | 8.24 | **0.9923** | 2.6289 |
+| 写 | 0.1451 | 1.34 | **0.9923** | 2.6219 |
+
+> **为什么差别小**：第一层 LayerNorm 会把整体尺度抹平，重要的只有词向量间的**相对结构**。
+> **⚠️ 副作用**：`Embedding.weight` 也是 2 维，会被一起 Xavier 掉（vocab 大时 std 从 1.0 压到 0.0073，**小 137 倍**）。实践上仍能训（后面有 LayerNorm 兜着），学习阶段建议照抄。
+
+#### 8. `SublayerConnection` 的对象树 ≠ 数据流
+
+打印模块树会看到 `sublayers` 和 `self_attn` 是**兄弟**，看不出包裹关系 —— 因为它是"回调式"设计：
+
+```python
+x = self.sublayers[0](x, lambda t: self.self_attn(t, t, t, mask))
+#                     ↑ 运行时才把 self_attn 传进去
+```
+
+```
+【对象树】                          【数据流】
+EncoderLayer                        x ──┬──────────────────────┐
+├─ self_attn                            │ sublayers[0]         │ 残差
+├─ feed_forward                         │   self_attn(...)     │
+└─ sublayers (×2)                       │   + x → LayerNorm    │
+   └─ norm, dropout                     └────────┬─────────────┘
+                                        ┌────────┴─────────────┐
+                                        │ sublayers[1]         │ 残差
+                                        │   feed_forward(x)    │
+                                        │   + x → LayerNorm    │
+                                        └────────┬─────────────┘
+```
+
+#### 9. `trace_utils.py`：树形看结构
+
+```python
+from trace_utils import trace
+trace(model, src, tgt, src_mask=src_mask, tgt_mask=tgt_mask)
+```
+
+同类型重复层自动折叠，37 行就能看完 6 层模型：
+
+```
+└─ model : Transformer    45,677,544
+   ├─ encoder : Encoder  (2,10,512) → (2,10,512)    18,915,328
+   │  ├─ layers : ModuleList    18,914,304
+   │  │  └─ 0 : EncoderLayer  (2,10,512) → (2,10,512)    3,152,384   ×6 个
+   │  │     ├─ self_attn : Multi_Head_Attention  ...    1,050,624
+   │  │     │  └─ linear_q : Linear  (2,10,512) → (2,10,512)  ★ 262,656   ×4 个
+   │  │     ├─ feed_forward : PositionwiseFeedForward  ...    2,099,712
+   │  │     │  ├─ linear1 : Linear  (2,10,512) → (2,10,2048)  ★ 1,050,624
+   │  │     │  └─ linear2 : Linear  (2,10,2048) → (2,10,512)  ★ 1,049,088
+   │  │     └─ sublayers : ModuleList    2,048
+   │  │        └─ 0 : SublayerConnection  ...    1,024   ×2 个
+   │  └─ norm : LayerNorm  ★ 1,024
+   └─ output_layer : Output  (2,8,512) → (2,8,1000)    513,000
+```
+
+**读法**：`├─`/`└─` 是层级；`(…) → (…)` 该模块的输入/输出形状；**★ = 参数就在这一层**。
+
+**★ 还能直接看出"源句 10 词、目标句 8 词"** —— `encoder` 是 `(2,10,512)`，`decoder` 是 `(2,8,512)`，这正是交叉注意力要处理的长度差异。
 
 ## 环境
 
@@ -987,6 +1294,22 @@ nlp/
 │   ├── data/eng-fra-v2.txt                     英法句对 63,594 行（3.2 MB，已提交）
 │   └── model/                                  encoder/decoder_rnn_**50**.pth（只留最终轮 27.5 MB，已 gitignore；
 │                                               1~49 轮共 1.35 GB 已清理，省 1.3 GB）
+├── transformer架构/              Day08–Day09 P110–P143 Transformer 逐层实现（完整模型 45,677,544 参数）
+│   ├── dm01_input.py                           词嵌入层 Embedding（×√d_model）+ 位置编码 PositionalEncoding（register_buffer）
+│   ├── dm02_encoder_element.py                 dm01_test_triu / attention（bmm+scale+softmax+dropout）
+│   │                                           / Multi_Head_Attention（4×Linear, 1,050,624 参数）
+│   │                                           / PositionwiseFeedForward（512→2048→512, 2,099,712）
+│   │                                           / LayerNorm（自定义 a_2 / b_2）
+│   ├── dm03_encoder_sublayer.py                 SublayerConnection：norm(x + dropout(sublayer(x)))（Post-LN）
+│   ├── dm04_encoder_layer.py                    EncoderLayer（自注意力 + FFN，单层 3,152,384 参数）
+│   ├── dm05_encoder.py                          Encoder（clones(layer, N) + 末尾 LayerNorm）
+│   ├── dm06_decoder_layer.py                    DecoderLayer（因果自注意力 + 交叉注意力 + FFN，单层 4,204,032）
+│   ├── dm07_decoder.py                          Decoder
+│   ├── dm08_output.py                           Output（Linear(d_model, vocab)，直接返回 logits，不接 softmax）
+│   ├── dm09_transformer.py                      Transformer 类 + make_model()（位置编码打包进 src_embed/tgt_embed）
+│   │                                            + use_transformer() 端到端自测
+│   └── trace_utils.py                           trace（树形打印模块层级 + 输入/输出形状 + 参数，自动折叠 ×N）
+│                                                / param_summary / Wrap
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
 ├── __pycache__/               Python 字节码缓存（生成物，已 gitignore）
 ├── .gitignore                 挡大文件 + runs/ + __pycache__
@@ -1081,6 +1404,57 @@ nlp/
 | P90 | 无 Attention 解码器_思路分析 | 见上面 Day05 第 6 节（中间语义只在第 0 步注入一次 = 信息瓶颈） |
 | P91 | 构建基于 GRU 解码器（无 Attention） | `英译法/translate.py`（`DecoderRNN_No_Attention`：Embedding(4345,256) + Dropout + GRU + Linear(512,4345)） |
 | P92 | 测试基于 GRU 的无 Attention 解码器 | `英译法/translate.py`（`test_decoder_No_Attention`） |
+| P93 | 带 Attention 的解码器·思路分析 | 视频未看，自己实现：Q = 解码器状态，K/V = 编码器输出（见 Day05 第 3 节） |
+| P94 | 带 Attention 的解码器·代码实现（上） | `英译法/translate.py`（`Decoder_Attention`；`attn_combine(768→512)` 让 GRU 不变宽） |
+| P95 | 带 Attention 的解码器·代码实现（下） | `英译法/translate.py`（batch=1 五轮 33.0% → 59.5% → 72.5% → 82.5% → **92.5%**） |
+| P96 | 带注意力解码器·测试代码 | `英译法/translate.py`（`test_decoder_Attention`） |
+| P97 | 模型搭建总结 | 见 Day06（`EncoderRNN` + `Decoder_Attention`） |
+| P98 | Teacher Forcing | 见 Day05 第 4 节（`teacher_forcing_ratio = 0.5`） |
+| P99 | 训练·单批次 | `英译法/translate.py`（`one_train`） |
+| P100 | 扩展 `view()` 演示 | 纯理论 |
+| P101 | 训练·完整代码 | `英译法/translate.py`（`train`，自己另加了 `resume_from` 断点续训） |
+| P102 | 训练总结 | 见 Day06（loss 参考值 `ln(词表) ≈ 8.38`） |
+| P103 | 预测·代码实现 | `英译法/translate.py`（`evaluate`，free-running） |
+| P104 | 预测·代码测试 | 200 句固定测试集，50 轮后句子级正确率峰值 **98.5%** |
+| P105 | 绘制张量图 | 见 Day07 第 2 节 |
+| P106 | Transformer 由来 | 见 Day07 第 3 节（RNN 三个硬伤） |
+| P107 | Transformer 架构介绍（文字版） | 见 Day07 第 4 节 |
+| P108 | 架构图·上 | 见 Day07 第 4 节（编码器侧） |
+| P109 | 架构图·下 | 见 Day07 第 4 节（解码器侧） |
+| P110 | 学习 Transformer 的路线 | 纯理论（无代码） |
+| P111 | 词嵌入层代码 | `transformer架构/dm01_input.py`（`Embedding`：`nn.Embedding` + 乘 `√d_model`） |
+| P112 | 位置编码原理 | 见 Day08 第 5 节 |
+| P113 | 位置编码总结 | 见 Day08 第 5 节 |
+| P114 | 位置编码代码 | `transformer架构/dm01_input.py`（`PositionalEncoding`，`register_buffer('pe')`） |
+| P115 | 位置编码测试 | `dm01_input.py`（修掉 `self.pe[:x.size(1)]` 切片错误，应切第 1 维） |
+| P116 | 扩展·上三角矩阵 | `dm02_encoder_element.py`（`dm01_test_triu`；`triu(ones, diagonal=1)` = 被挡住的位置） |
+| P117 | 扩展·下三角矩阵 | `dm02`（`tril(ones)` = 允许的位置；★ `diagonal=0` 会把对角线也挡掉 → NaN） |
+| P118 | 扩展·掩码可视化 | 纯演示 |
+| P119 | 扩展·`masked_fill()` | `dm02`（`attention` 里 `masked_fill(mask == 0, -inf)`；`mask==0` 等价 `~mask`） |
+| P120 | 注意力机制代码 | `dm02`（`attention()`：`bmm` + scale + softmax + dropout） |
+| P121 | 多头注意力原理图·上 | 见 Day08 第 2 节 |
+| P122 | 多头注意力原理图·下 | 见 Day08 第 2 节 |
+| P123 | 多头注意力代码 | `dm02`（`Multi_Head_Attention`，4 个 `Linear(512,512)` = **1,050,624** 参数） |
+| P124 | 多头注意力测试 | `dm02`（形状链见 Day08 第 1 节） |
+| P125 | 前馈全连接层 | `dm02`（`PositionwiseFeedForward`，512→2048→512 = **2,099,712** 参数） |
+| P126 | 规范化层代码 | `dm02`（`LayerNorm`，自定义 `a_2`/`b_2`） |
+| P127 | 规范化层测试 | `dm02`（`use_LayerNorm`，输出均值≈0 / std≈1） |
+| P128 | 扩展·BN 和 LN 的区别 | 纯理论（BN 按特征维、LN 按样本维） |
+| P129 | 子层结构代码 | `dm03_encoder_sublayer.py`（`SublayerConnection`，**Post-LN**，符合论文） |
+| P130 | 子层结构测试 | `dm03`（★ 若 norm 只加在分支上，16 层后 std 涨到 4.34；正确写法稳定 1.00） |
+| P131 | 编码器层代码 | `dm04_encoder_layer.py`（`EncoderLayer`：自注意力 + FFN，各套一层子层连接） |
+| P132 | 编码器层测试 | `dm04`（`use_encoder_layer`，单层 **3,152,384** 参数） |
+| P133 | 编码器代码及测试 | `dm05_encoder.py`（`Encoder`：`clones(layer, N)` + 末尾 `LayerNorm`） |
+| P134 | 解码器层代码 | `dm06_decoder_layer.py`（`DecoderLayer`：`self_attn(x,x,x,tgt_mask)` + `src_attn(x,memory,memory,src_mask)`） |
+| P135 | 解码器层测试 | `dm06`（`L_tgt=3, L_src=4` 跑通；交叉注意力是**矩形**分数矩阵） |
+| P136 | 解码器代码及测试 | `dm07_decoder.py`（`Decoder`，每层多一个交叉注意力子层） |
+| P137 | 输出部分代码 | `dm08_output.py`（`Output`：`Linear(d_model, vocab)`，★ **直接返回 logits，不接 softmax**） |
+| P138 | 输出部分测试 | `dm08`（`use_output`；形状 `(B,L_tgt,512) → (B,L_tgt,vocab)`） |
+| P139 | 完整架构搭建·上 | `dm09_transformer.py`（`Transformer` 类：`encoder`/`decoder`/`src_embed`/`tgt_embed`/`output_layer`） |
+| P140 | 完整架构搭建·下 | `dm09`（`make_model`；★ 位置编码必须打包进 `src_embed`/`tgt_embed`，漏了模型分不出词序） |
+| P141 | 架构测试·上 | `dm09`（`use_transformer`；端到端 `(2,10)` + `(2,8)` → `(2,8,1000)`，无 NaN） |
+| P142 | 架构组件介绍 | 见 Day09 第 4 节（参数分布表） |
+| P143 | 架构测试·下 | 见 Day09 第 6 节（四项行为测试：因果性 / 位置编码 / padding / 梯度） |
 
 ## 运行方式
 
@@ -1473,6 +1847,98 @@ enc_mask (B, L)          ← 少了中间那一维
 - **必须在 softmax 之前**：先 softmax 再置 0，权重和变成 **0.9618**（归一化被破坏，因为分母已经把 PAD 算进去了）
 
 **边界**：整行都 mask → `softmax([-inf,-inf,-inf]) = [nan,nan,nan]`，NaN 会顺着梯度污染整个模型。
+
+### 15. `nn.Module` 里**方法名和属性名撞了**会无限递归，且 `get_submodule` 直接崩（`transformer架构/` 踩到）
+
+课程代码里同时写了 `self.encoder = encoder`（模块）和 `def encoder(self, ...)`（方法）。
+
+**关键机制**：`nn.Module.__setattr__` 会把模块存进 **`_modules`**，**不进 `__dict__`**：
+
+```
+m.__dict__ 里有 'encoder' 吗？   False      ← 关键
+m._modules 里有 'encoder' 吗？   True
+type(m.encoder).__name__       = method     ← 拿到的是【方法】不是模块
+```
+
+属性查找顺序是「实例 `__dict__` → 类字典」，`__dict__` 里没有 → **找到类上的方法 → 方法胜出**。
+
+```python
+def encoder(self, source_x, source_mask):
+    return self.encoder(embedded, source_mask)   # ← 调用的是【自己】
+# ✗ RecursionError: maximum recursion depth exceeded
+```
+
+**而且 `decode` 却没事** —— 因为属性叫 `decoder`（多一个 `r`），和方法名 `decode` 错开了。
+
+**连带破坏的 API**：
+
+| 检查项 | 结果 |
+| --- | --- |
+| `state_dict()` / `named_modules()` / `parameters()` | ✓ 正常（内部直接读 `_modules`，会给你"能跑"的错觉） |
+| `model.encoder` | ✗ 拿到的是方法 |
+| `model.get_submodule('encoder')` | ✗ `AttributeError: encoder is not an nn.Module` |
+
+**修法**：方法改名 `encode`（属性 `self.encoder` ↔ 方法 `encode`，错开一个字母）。或者干脆不写包装，`forward` 里直接调 `self.encoder(...)`。
+
+> **规范**：`self.encoder` / `def encode`、`self.decoder` / `def decode`、`self.norm` / `def normalize` —— **别同名**。
+> 自检：`print(type(model.encoder))` 显示 `method` 就是撞了。
+
+### 16. 位置编码没接上，模型**完全分不出词序**，但照样能训（`transformer架构/dm09_transformer.py` 踩到）
+
+`PositionalEncoding` 写好了，却忘了放进 `src_embed`：
+
+```python
+src_embed = nn.Sequential(Embedding(vocab, d_model))                       # ❌ 漏了
+src_embed = nn.Sequential(Embedding(vocab, d_model), PositionalEncoding(d_model))  # ✅
+```
+
+**为什么致命**：Transformer 的所有子层都**位置对称**（自注意力对排列不敏感、FFN 逐位置同参数、LayerNorm 逐位置独立、残差逐元素），所以整个编码器满足 `enc(perm(x)) = perm(enc(x))`。
+
+**实测（同一批词打乱顺序，比较还原后的输出）**：
+
+| `src_embed` 组成 | 最大差 | 能区分词序 |
+| --- | --- | --- |
+| 只有 `Embedding` | **0.000001** | ❌ 数学上完全相等 |
+| `Embedding + PositionalEncoding` | **0.522509** | ✓ |
+
+> **模型会把"我爱你"和"你爱我"当成同一个东西，但 loss 照样在降、训练照样"成功"。**
+
+**常备自检**：
+
+```python
+ids = torch.tensor([[5, 7, 9, 11]]);  perm = torch.tensor([2, 0, 3, 1])
+h1 = model.encoder(model.src_embed(ids))
+h2 = model.encoder(model.src_embed(ids[:, perm]))
+assert (h2[0] - h1[0][perm]).abs().max() > 1e-3, '位置编码没生效！'
+```
+
+### 17. `mask` 传 4 维会被 `unsqueeze(1)` 加成 5 维，报错却在 `permute` 里（`dm02_encoder_element.py` 踩到）
+
+```python
+if mask is not None:
+    mask = mask.unsqueeze(1)      # 无条件插一维
+```
+
+| 传进来的 `mask` | unsqueeze 后 | 结果 |
+| --- | --- | --- |
+| `(B, L, L)` 3 维 | `(B, 1, L, L)` | ✓ |
+| `(B, 1, L, L)` 4 维 | `(B, 1, 1, L, L)` | ✗ **变 5 维** |
+| `(L, L)` 2 维 | `(L, 1, L)` | ✗ 位置插错，广播错位 |
+
+**4 维的崩法**：`masked_fill` 时 broadcasts 出 `(1,2,8,4,4)` 的 5 维张量 → 一路传到 `output.permute(0,2,1,3)` 才炸：
+
+```
+RuntimeError: permute(sparse_coo): input.dim() = 5 is not equal to len(dims) = 4
+```
+
+**报错信息完全没提 mask**，很难定位。**修法**：
+
+```python
+if mask is not None and mask.dim() == 3:
+    mask = mask.unsqueeze(1)
+```
+
+**顺带记住 `src_mask` 唯一通用的形状是 `(B, 1, L_src)`** —— 它要同时喂编码器自注意力 `(B,h,L_src,L_src)` 和交叉注意力 `(B,h,L_tgt,L_src)`，只有这一种能两边广播通过。
 
 ## 说明
 
