@@ -12,6 +12,106 @@
 上一个项目 **《神经网络与深度学习》**（黑马，108 P，PyTorch → ANN → CNN → RNN）已学完，
 项目地址：`D:\ML_Project\Deep Learn`。
 
+<!-- TOC -->
+<details>
+<summary><b>📑 目录（点击展开 · 92 个锚点）</b></summary>
+
+- [学习进度](#学习进度)
+- [知识点笔记](#知识点笔记)
+  - [Day01 文本预处理与词向量（P2–P17）](#day01-文本预处理与词向量p2p17)
+    - [1. 分词（jieba）](#1-分词jieba)
+    - [2. 词性标注与 NER](#2-词性标注与-ner)
+    - [3. one-hot 的局限（为什么要学词向量）](#3-one-hot-的局限为什么要学词向量)
+    - [4. CBOW 原理（P17 重点）](#4-cbow-原理p17-重点)
+    - [5. 样本数与 epoch（最容易想错的地方）](#5-样本数与-epoch最容易想错的地方)
+  - [Day02 词向量与 WordEmbedding（P18–P35）](#day02-词向量与-wordembeddingp18p35)
+    - [1. FastText 实操（P19–P22）→ 文本张量表示/02_CBOW和skiggram.py](#1-fasttext-实操p19p22-文本张量表示02_cbow和skiggrampy)
+    - [2. nn.Embedding 的本质：一张"可训练的查表"](#2-nnembedding-的本质一张可训练的查表)
+    - [3. 最容易出错的地方：词表编号 1-based ↔ Embedding 行号 0-based](#3-最容易出错的地方词表编号-1-based--embedding-行号-0-based)
+    - [4. TensorBoard 词向量可视化（P24）](#4-tensorboard-词向量可视化p24)
+  - [Day03 文本规范 + RNN / LSTM / GRU（P36–P54）](#day03-文本规范--rnn--lstm--grup36p54)
+    - [1. RNN 的两个返回值（实测形状）](#1-rnn-的两个返回值实测形状)
+    - [2. 权重共享 ≠ 冻结](#2-权重共享--冻结)
+    - [3. 梯度在时间上是累加的](#3-梯度在时间上是累加的)
+    - [4. LSTM 的反向传播](#4-lstm-的反向传播)
+    - [5. GRU 与 LSTM 的区别（P48–P49）](#5-gru-与-lstm-的区别p48p49)
+  - [Day04 人名分类案例实战（P55–P65）](#day04-人名分类案例实战p55p65)
+    - [1. 数据与形状链路（这张表值一章）](#1-数据与形状链路这张表值一章)
+    - [2. hn 和 out[:, -1, :] 是不是一回事](#2-hn-和-out--1--是不是一回事)
+    - [3. 什么时候需要返回 hn](#3-什么时候需要返回-hn)
+    - [4. LSTM 的初始状态：(None, None) 会崩](#4-lstm-的初始状态none-none-会崩)
+    - [5. LogSoftmax / NLLLoss / CrossEntropyLoss](#5-logsoftmax--nllloss--crossentropyloss)
+    - [6. 为什么 batch_size 只能是 1（以及 GPU 为什么帮不上忙）](#6-为什么-batch_size-只能是-1以及-gpu-为什么帮不上忙)
+    - [7. 三模型对照实验结果（P60–P63）](#7-三模型对照实验结果p60p63)
+    - [8. 日志与可视化的做法](#8-日志与可视化的做法)
+  - [Day05 注意力机制（P66–P79）](#day05-注意力机制p66p79)
+    - [1. Q / K / V 到底是什么](#1-q--k--v-到底是什么)
+    - [2. 注意力四步 + 两种算分数的算法](#2-注意力四步--两种算分数的算法)
+    - [3. ★ 课程的 attention 是"位置打分"，不是"内容比对"](#3--课程的-attention-是位置打分不是内容比对)
+    - [4. 除以 √d 是缩放，不是装饰](#4-除以-d-是缩放不是装饰)
+    - [5. 自注意力 vs 交叉注意力：公式一模一样，只是喂什么不同](#5-自注意力-vs-交叉注意力公式一模一样只是喂什么不同)
+    - [6. 无注意力解码器：中间语义只注入一次](#6-无注意力解码器中间语义只注入一次)
+    - [7. 训练循环的两件必修课（P92 阶段踩到的）](#7-训练循环的两件必修课p92-阶段踩到的)
+  - [Day06 Seq2Seq 英译法案例（P80–P95）](#day06-seq2seq-英译法案例p80p95)
+    - [1. 数据与词表](#1-数据与词表)
+    - [2. 模型结构（自己实现的有注意力解码器）](#2-模型结构自己实现的有注意力解码器)
+    - [3. ★ 实验结果：正确率随轮次的变化](#3--实验结果正确率随轮次的变化)
+    - [4. ★ 超参数：lr 是最关键的一项](#4--超参数lr-是最关键的一项)
+    - [5. 训练循环的三个易错点（都已实测）](#5-训练循环的三个易错点都已实测)
+    - [6. ★ batch 化改造：PAD + pack + mask（batch=1 → 32，每句快 20 倍）](#6--batch-化改造pad--pack--maskbatch1--32每句快-20-倍)
+  - [Day07 英译法案例（下）+ Transformer 登场（P96–P109）](#day07-英译法案例下-transformer-登场p96p109)
+    - [1. P96–P104 与自己实现的对应关系](#1-p96p104-与自己实现的对应关系)
+    - [2. P105 张量图：为什么要画它](#2-p105-张量图为什么要画它)
+    - [3. P106 Transformer 的由来：RNN 的三个硬伤](#3-p106-transformer-的由来rnn-的三个硬伤)
+    - [4. P107–P109 Transformer 架构总览](#4-p107p109-transformer-架构总览)
+  - [Day08 Transformer 逐层实现（上）：词嵌入 / 位置编码 / 注意力 / 前馈（P110–P125）](#day08-transformer-逐层实现上词嵌入--位置编码--注意力--前馈p110p125)
+    - [1. 注意力四步与形状链](#1-注意力四步与形状链)
+    - [2. 多头 vs 单头：参数量一样，差在"几个 softmax"](#2-多头-vs-单头参数量一样差在几个-softmax)
+    - [3. 为什么必须有 linear_out（W_o）](#3-为什么必须有-linear_outw_o)
+    - [4. 8 个头都看全部 512 维，但每个只输出 64 维](#4-8-个头都看全部-512-维但每个只输出-64-维)
+    - [5. 位置编码：为什么是 x + pe 而不是拼接](#5-位置编码为什么是-x--pe-而不是拼接)
+  - [Day09 Transformer 逐层实现（下）：规范化 / 编码器 / 解码器 / 整体拼装（P126–P143）](#day09-transformer-逐层实现下规范化--编码器--解码器--整体拼装p126p143)
+    - [1. 三种注意力：一张表说清](#1-三种注意力一张表说清)
+    - [2. 交叉注意力的维度要求](#2-交叉注意力的维度要求)
+    - [3. ★ 掩码的三个坑](#3--掩码的三个坑)
+    - [4. 完整模型与参数分布](#4-完整模型与参数分布)
+    - [5. ★ make_model 最容易漏的一步：位置编码](#5--make_model-最容易漏的一步位置编码)
+    - [6. 四项行为测试（能跑 ≠ 对）](#6-四项行为测试能跑--对)
+    - [7. 初始化：那三行 Xavier 要不要写](#7-初始化那三行-xavier-要不要写)
+    - [8. SublayerConnection 的对象树 ≠ 数据流](#8-sublayerconnection-的对象树--数据流)
+    - [9. trace_utils.py：树形看结构](#9-trace_utilspy树形看结构)
+    - [10. 疑问与澄清：学 Transformer 时的真实困惑](#10-疑问与澄清学-transformer-时的真实困惑)
+    - [11. ⇩ Transformer 还缺什么（课程 P143 之后不再讲，留待空闲补）](#11--transformer-还缺什么课程-p143-之后不再讲留待空闲补)
+- [环境](#环境)
+  - [依赖现状（2026 年排查，基于 nlpbase）](#依赖现状2026-年排查基于-nlpbase)
+    - [GPU 版 PyTorch（✅ 2026-10-10 已装好，命令留档备查）](#gpu-版-pytorch-2026-10-10-已装好命令留档备查)
+- [目录约定](#目录约定)
+- [分集 → 练习文件](#分集--练习文件)
+- [运行方式](#运行方式)
+- [踩坑记录](#踩坑记录)
+  - [1. PyCharm 的「还原提交」(Revert) 不是"撤销提交"，它会把文件从磁盘删掉](#1-pycharm-的还原提交revert-不是撤销提交它会把文件从磁盘删掉)
+  - [2. GitHub 单文件 100 MB 硬限制](#2-github-单文件-100-mb-硬限制)
+  - [3. TensorFlow 在 Windows 中文路径下会崩（本项目最大的坑）](#3-tensorflow-在-windows-中文路径下会崩本项目最大的坑)
+  - [4. TensorBoard 起不来：No module named 'pkg_resources'](#4-tensorboard-起不来no-module-named-pkg_resources)
+  - [5. add_embedding 的 metadata 个数必须等于矩阵行数](#5-add_embedding-的-metadata-个数必须等于矩阵行数)
+  - [6. 相对路径 = 相对"工作目录"，不是相对脚本文件](#6-相对路径--相对工作目录不是相对脚本文件)
+  - [7. TensorBoard 启动：--logdir 别拼成 --logdis](#7-tensorboard-启动--logdir-别拼成---logdis)
+  - [8. pandas 默认读 TSV 会因"引号解析"静默丢行](#8-pandas-默认读-tsv-会因引号解析静默丢行文本分析datatraintsv-踩到)
+  - [9. 训练统计的"分子分母"必须同一口径](#9-训练统计的分子分母必须同一口径rnn模型04_人名国家识别py-踩到)
+  - [10. 解码器里加了 softmax，外面又用 CrossEntropyLoss → 梯度只剩 16%](#10-解码器里加了-softmax外面又用-crossentropyloss--梯度只剩-16英译法translatepy-踩到)
+  - [11. 训练时不喂 SOS，SOS 的 embedding 永远学不到 → 推理第一步就崩](#11-训练时不喂-sossos-的-embedding-永远学不到--推理第一步就崩英译法translatepy-踩到)
+  - [12. Adam 配 lr=0.01 会发散：loss 越训越大](#12-adam-配-lr001-会发散loss-越训越大英译法translatepy-踩到)
+  - [13. pack 和 mask 不能互相替代 —— 它们修的是两台不同的机器](#13-pack-和-mask-不能互相替代--它们修的是两台不同的机器英译法translatepy-改造时踩到)
+  - [14. masked_fill 的两个手工细节都不能省，且都不报错](#14-masked_fill-的两个手工细节都不能省且都不报错英译法translatepy-踩到)
+  - [15. nn.Module 里方法名和属性名撞了会无限递归，且 get_submodule 直接崩](#15-nnmodule-里方法名和属性名撞了会无限递归且-get_submodule-直接崩transformer架构-踩到)
+  - [16. 位置编码没接上，模型完全分不出词序，但照样能训](#16-位置编码没接上模型完全分不出词序但照样能训transformer架构dm09_transformerpy-踩到)
+  - [17. mask 传 4 维会被 unsqueeze(1) 加成 5 维，报错却在 permute 里](#17-mask-传-4-维会被-unsqueeze1-加成-5-维报错却在-permute-里dm02_encoder_elementpy-踩到)
+- [说明](#说明)
+- [参考](#参考)
+
+</details>
+<!-- /TOC -->
+
 ## 学习进度
 
 | 阶段 | 内容 | 分集 | 状态 |
@@ -118,6 +218,8 @@
 
 > 已全部完成（P18–P35）。下面记的是 P18–P25 这段的核心内容，P26–P34 的文本分析见 `文本分析/` 目录。
 
+<a id="1-fasttext-实操p19p22-文本张量表示02_cbow和skiggrampy"></a>
+
 #### 1. FastText 实操（P19–P22）→ `文本张量表示/02_CBOW和skiggram.py`
 
 - 环境：**`fasttext-wheel 0.9.2`**（官方 `fasttext` 在 Windows 上常要现场编译，`fasttext-wheel` 直接给轮子）
@@ -139,6 +241,8 @@
 - `nn.Embedding(num_embeddings=V, embedding_dim=N)` 内部就是一个 `(V, N)` 矩阵 `weight`
 - 前向传入**整数下标**，等价于 `weight[idx]`；数学上等价于 `one-hot × W`，实现上**直接查行**（稀疏、高效）
 - `embedding_dim=8` 是"每个词用 8 个数表示"（不是 8 个词），整表形状 `(V, 8)`
+
+<a id="3-最容易出错的地方词表编号-1-based--embedding-行号-0-based"></a>
 
 #### 3. 最容易出错的地方：词表编号 1-based ↔ Embedding 行号 0-based
 
@@ -207,6 +311,8 @@ my_summary.close()
 - **分类**取最后一步（`hn[-1]` 或 `output[:, -1, :]`）；**词性标注 / 预测下一个词**这类每个位置都要输出的任务才取全部。
 - `output` **不跨批次累积**：第二次调用只返回这一批的词，想拼接得自己 `torch.cat`；能带过批次的只有 `hn`（要手动当 `h0` 传回去）。
 - `hn` 是**压缩记忆**：改第 1 个词只让 `hn` 动 0.172，改第 4 个词动 0.987；序列拉到 60 个词时，第 1 个词的影响在 float32 下已下溢为 0。
+
+<a id="2-权重共享--冻结"></a>
 
 #### 2. 权重共享 ≠ 冻结
 
@@ -413,6 +519,8 @@ JSON 字段约定（这样 `plot_train_logs` 之类的代码读 `loss_list` 就�
 - `bmm` 要求两个参数都是 3D → 必须 `unsqueeze`；`matmul`/`@` 在 batch=1 时能用但 batch>1 会静默给出 `(B,B,d)`；
   `einsum('bw,bwd->bd', w, V)` 不需要 unsqueeze 且完全并行（CPU 实测 3.429 ms vs bmm 3.355 ms vs 逐元素乘加 16.026 ms）。
 
+<a id="3--课程的-attention-是位置打分不是内容比对"></a>
+
 #### 3. ★ 课程的 attention 是"位置打分"，不是"内容比对"
 
 课程/tutorial 的写法是 `self.atten = nn.Linear(query_dim + key_dim, word_count)`，**输入是 `[q ; k]` 两个向量，输出 `word_count` 个分数**——第 j 个分数由第 j 行权重算出：
@@ -442,6 +550,8 @@ attention_output  = torch.bmm(attention_weights, v)
 | 改一个词的 k | 32 个分数全变 | 只有那一个变 |
 | 语序变化 / 变长句子 | ❌ 失效 | ✅ 天然支持 |
 | 谁在用 | 官方 tutorial、本课程 | Transformer、所有现代模型 |
+
+<a id="4-除以-d-是缩放不是装饰"></a>
 
 #### 4. 除以 `√d` 是**缩放**，不是装饰
 
@@ -536,6 +646,8 @@ Decoder_Attention:
 
 **关键设计**：用 `attn_combine` 把 768 维压回 512，所以 **GRU 的 `input_size` 保持 512** 不用变宽（比官方新版教程的做法更干净）。
 
+<a id="3--实验结果正确率随轮次的变化"></a>
+
 #### 3. ★ 实验结果：正确率随轮次的变化
 
 **评测方法**：200 句固定测试集（seed 固定，各轮共用），**匹配任一参考译法即算正确**（其中 70 句是"一对多"）。
@@ -558,6 +670,8 @@ Decoder_Attention:
 - **罕见词的长尾问题会随训练轮次自愈**：`i am from shizuoka .` 前 4 轮都输出 `je suis de suis .`（罕见词 `shizuoka` 退化成高频词 `suis`），**第 5 轮终于输出正确的 `je suis de shizuoka .`**
 - `we re in love .` → `nous sommes en .`（不是任何参考答案）—— 因为这句在训练集里**有 3 个不同的法语答案**，模型学成了"混合体"。这类"一对多"用多参考匹配也救不回来，是数据固有的不确定性
 
+<a id="4--超参数lr-是最关键的一项"></a>
+
 #### 4. ★ 超参数：`lr` 是最关键的一项
 
 | 配置 | 1000 步后的表现 |
@@ -577,6 +691,8 @@ Decoder_Attention:
 | **SOS 与右移** | 输入 `[SOS] + y[:-1]`，目标 `y`。不塞 SOS 时 loss 反而更低（抄输入更容易），但推理崩 —— 见踩坑记录第 11 条 |
 | **decoder 里不能加 softmax** | `CrossEntropyLoss` 自带 `log_softmax`，加了梯度只剩 16% —— 见踩坑记录第 10 条 |
 | **推理时的 batch 维** | `evaluate` 里 `input_tensor` 必须 `.unsqueeze(0)`，否则 `embedding(1维)` → 2 维 → GRU 报 `For unbatched 2-D input, hx should also be 2-D but got 3-D` |
+
+<a id="6--batch-化改造pad--pack--maskbatch1--32每句快-20-倍"></a>
 
 #### 6. ★ batch 化改造：PAD + pack + mask（batch=1 → 32，每句快 20 倍）
 
@@ -1021,6 +1137,8 @@ attn (B,L_tgt,L_src) @ v (B,L_src,512) = out (B,L_tgt,512)   ← L_src 被吃掉
 
 **实测**：`x (2,3,512)` + `memory (2,4,512)` → 输出 `(2,3,512)`，分数矩阵 `(2,8,3,4)`。
 
+<a id="3--掩码的三个坑"></a>
+
 #### 3. ★ 掩码的三个坑
 
 **坑 1：`tgt_mask` 用 `torch.ones` → 偷看未来**
@@ -1073,6 +1191,8 @@ model = make_model(src_vocab=1000, tgt_vocab=1000, N=6, d_model=512, d_ff=2048, 
 
 > **★ FFN 参数量是注意力的 2 倍** —— 很多人以为注意力是大头，其实 `512×2048×2` 更重。
 
+<a id="5--make_model-最容易漏的一步位置编码"></a>
+
 #### 5. ★ `make_model` 最容易漏的一步：位置编码
 
 ```python
@@ -1103,6 +1223,8 @@ h2 = model.encoder(model.src_embed(ids[:, perm]))
 diff = (h2[0] - h1[0][perm]).abs().max()      # 应 > 1e-3
 ```
 
+<a id="6-四项行为测试能跑--对"></a>
+
 #### 6. 四项行为测试（能跑 ≠ 对）
 
 | # | 测什么 | 方法 | 实测结果 |
@@ -1130,6 +1252,8 @@ for p in model.parameters():
 
 > **为什么差别小**：第一层 LayerNorm 会把整体尺度抹平，重要的只有词向量间的**相对结构**。
 > **⚠️ 副作用**：`Embedding.weight` 也是 2 维，会被一起 Xavier 掉（vocab 大时 std 从 1.0 压到 0.0073，**小 137 倍**）。实践上仍能训（后面有 LayerNorm 兜着），学习阶段建议照抄。
+
+<a id="8-sublayerconnection-的对象树--数据流"></a>
 
 #### 8. `SublayerConnection` 的对象树 ≠ 数据流
 
@@ -1202,6 +1326,8 @@ trace(model, src, tgt, src_mask=src_mask, tgt_mask=tgt_mask)
 | 11 | 那**不写**那三行有问题吗？ | 小模型/学习阶段差别很小（150 步后 loss 2.6289 vs 2.6219）。原因：第一层 LayerNorm 会把整体尺度抹平 | `encoder` 输出 std 两边都是 **0.9923** |
 | 12 | 打印出来的模块树看不懂，到底谁是谁的分支？ | `sublayers` 和 `self_attn` 在对象树上是**兄弟**，因为 `SublayerConnection` 是"回调式"设计（`forward(x, sublayer)` 接收函数），包裹关系只在调用里，不在对象树上 | `x = self.sublayers[0](x, lambda t: self.self_attn(t, t, t, mask))` |
 | 13 | docstring 悬停显示的内容为什么比官方的少？ | 官方 `math.sqrt` 有**摘要行**（`Return the square root of x.`）。我的 docstring 一上来就是 `:param:`，没有摘要行 → 悬停只剩 `Parameters` 面板 | 规则：摘要行 → 空行 → 详细说明 → 空行 → `:param:` / `:return:` |
+
+<a id="11--transformer-还缺什么课程-p143-之后不再讲留待空闲补"></a>
 
 #### 11. ⇩ Transformer 还缺什么（课程 P143 之后不再讲，留待空闲补）
 
@@ -1377,6 +1503,8 @@ nlp/
 ```
 
 后续目录（学到再建）：`Transformer/` Day07–09 · `Fasttext/` Day10 · `预训练模型/` Day10–12
+
+<a id="分集--练习文件"></a>
 
 ## 分集 → 练习文件
 
@@ -1712,6 +1840,8 @@ for epoch in range(epochs):
 
 **教训**：**统计量的分子和分母必须是同一个时间尺度**。改口径时要把"清零的位置"和"分母"一起检查——只改一半，数字会看起来像"模型训崩了"，实际是统计代码错了。
 
+<a id="10-解码器里加了-softmax外面又用-crossentropyloss--梯度只剩-16英译法translatepy-踩到"></a>
+
 ### 10. 解码器里加了 softmax，外面又用 CrossEntropyLoss → 梯度只剩 16%（`英译法/translate.py` 踩到）
 
 `nn.CrossEntropyLoss` **内部自带 `log_softmax`**，所以解码器 `forward` 里**不能**再写 softmax：
@@ -1741,6 +1871,8 @@ log_softmax(概率) = [-2.325, -2.257, -2.360]   ← 实际算的是这个
 二维张量上隐式选 `dim=1` 恰好是词表维所以"侥幸对"，但张量变成 3 维就会在**错误的维度**归一化。**永远写 `dim=-1`。**
 
 **教训**：这类错误 **loss 曲线照样在降**，只是慢——不看梯度就查不出来。**"不报错"不等于"对"。**
+
+<a id="11-训练时不喂-sossos-的-embedding-永远学不到--推理第一步就崩英译法translatepy-踩到"></a>
 
 ### 11. 训练时不喂 SOS，SOS 的 embedding 永远学不到 → 推理第一步就崩（`英译法/translate.py` 踩到）
 
