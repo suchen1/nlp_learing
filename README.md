@@ -1205,15 +1205,39 @@ trace(model, src, tgt, src_mask=src_mask, tgt_mask=tgt_mask)
 
 #### 11. ⇩ Transformer 还缺什么（课程 P143 之后不再讲，留待空闲补）
 
-**课程讲完架构就跳到 Fasttext 了，全程没讲怎么训练这个 Transformer。** 目前 `dm09` 只能 forward，还不能翻译句子。要补的四块：
+**课程讲完架构就跳到 Fasttext 了，全程没讲怎么训练这个 Transformer。** 目前 `dm09` 只能 forward，还不能翻译句子。
+
+> **⚠️ 先明确一点：`dm09.forward` 本身是对的，不用改。** 下面的 1/3/4/5 是**新增文件**，
+> 第 2 项是**可选重构**（实测不加也能写推理，见下面备注）。
 
 | # | 缺什么 | 作用 | 备注 |
 | --- | --- | --- | --- |
 | 1 | `make_pad_mask` / `make_causal_mask` / `make_tgt_mask` | 三个掩码构造函数 | ★ `src_mask` 必须是 `(B,1,L_src)`；`tgt_mask` 用 `tril` |
-| 2 | `encode` / `decode` 两个方法 | 分离编码与解码，推理时缓存 `memory` | ★ 名字别叫 `encoder`（见踩坑 15） |
-| 3 | `greedy_decode` | 自回归生成：从 SOS 起，每步取 argmax，遇 EOS 停 | 推理入口 |
+| 2 | *(`encode` / `decode` 方法)* | **可选，不是必须**。只是让推理代码短一点 | 实测不加也能写 `greedy_decode`：直接 `model.encoder(model.src_embed(src), src_mask)` 即可。⚠️ 若加，名字别叫 `encoder`（见踩坑 15） |
+| 3 | `greedy_decode` | 自回归生成：从 SOS 起，每步取 argmax，遇 EOS 停 | 推理入口；**依赖 `forward` 已有的部件，不需要改 `dm09`** |
 | 4 | `SimpleLossCompute` + 训练循环 | `CrossEntropyLoss(ignore_index=PAD)` + Adam + warmup | 复用 `英译法/` 的 `my_collate` 与词表 |
 | 5 | 数据管道 | `英译法/data/eng-fra-v2.txt`（63,594 句对）+ 词表 | EN **2803** / FR **4345** |
+
+**`greedy_decode` 的最小写法（已实测跑通，不需要给 `Transformer` 加任何方法）：**
+
+```python
+@torch.no_grad()
+def greedy_decode(model, src, src_mask, max_len=50, sos=0, eos=1):
+    B = src.size(0)
+    memory = model.encoder(model.src_embed(src), src_mask)      # ★ 只算一次，缓存
+    ys = torch.full((B, 1), sos, dtype=torch.long)
+    done = torch.zeros(B, dtype=torch.bool)
+    for _ in range(max_len):
+        L = ys.size(1)
+        tgt_mask = torch.tril(torch.ones(L, L)).repeat(B, 1, 1)  # 因果
+        h = model.decoder(model.tgt_embed(ys), memory, src_mask, tgt_mask)
+        nxt = model.output_layer(h)[:, -1].argmax(-1)            # 取最后一步的 argmax
+        ys = torch.cat([ys, nxt.unsqueeze(1)], dim=1)
+        done |= nxt.eq(eos)
+        if done.all():
+            break
+    return ys
+```
 
 **参考规模**：`d_model=512, N=6, heads=8, d_ff=2048` → 45.7 M 参数（vocab=1000）；换成实际词表约 **48 M**。
 在 RTX 5060 Ti 上可与 `英译法/` 的 GRU 版做对照实验（GRU 版 batch=32 峰值 **98.5%**）。
