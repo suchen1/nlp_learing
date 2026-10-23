@@ -37,32 +37,44 @@ def _shape(t):
     return type(t).__name__
 
 
-def trace(model, *args, show_params=True, **kwargs):
-    """跑一次 forward，打印每一层的输入/输出形状（以及自身参数量）。
+def trace(model, *args, show_params=True, collapse=True, max_depth=None, **kwargs):
+    """跑一次 forward，用【树形】打印每个模块的 输入/输出形状 + 参数量。
 
-    :param model: 任意 nn.Module
-    :param args:  传给 model.forward 的位置参数（通常就是输入张量）
-    :param show_params: 是否显示参数量列
+    相比平铺列表，树形输出能一眼看出层级关系；同类型的重复层会自动折叠。
+
+    :param model:  任意 nn.Module
+    :param args:   传给 model.forward 的位置参数（通常就是输入张量）
+    :param show_params: 是否显示参数量
+    :param collapse: 同类型重复的兄弟模块是否折叠成 ×N（只展开第一个）
+    :param max_depth: 最多展开几层（None = 全部）
     :param kwargs: 传给 model.forward 的关键字参数（如 mask=...）
-    :return: [(层名, 类型, 输入形状, 输出形状, 自身参数量), ...]
+    :return: {模块全名: (输入形状, 输出形状)}, 以及总参数量
 
-    ★ 内部会 model.eval() 再恢复原状态，所以 dropout 不会干扰。
+    ★ 内部会临时 model.eval()，结束后恢复原状态，所以 dropout 不会干扰。
+
+    读法::
+
+        model : Transformer                        ← 根节点
+        ├─ encoder : Encoder          (2,10,512)→(2,10,512)
+        │  ├─ layers : ModuleList
+        │  │  └─ [0] : EncoderLayer   ...   ×6（只展开第1个）
+        │  └─ norm : LayerNorm
+        └─ output_layer : Output
+
+    注意：SublayerConnection 是"回调式"设计，它不持有子层，
+    而是在 forward(x, sublayer) 里接收函数 —— 所以对象树上
+    sublayers 和 self_attn 是【兄弟】，包裹关系不在树里。
     """
-    rec = []
-    was_training = model.training
-    model.eval()
+    # ── 1. 跑一次 forward，用 hook 收集每个模块的形状 ──
+    shapes = {}
 
     def make_hook(name):
         def hook(mod, inp, out):
-            rec.append((
-                name,
-                type(mod).__name__,
-                _shape(inp[0]) if inp else '(无输入)',
-                _shape(out),
-                sum(p.numel() for p in mod.parameters(recurse=False)),
-            ))
+            shapes[name] = (_shape(inp[0]) if inp else '-', _shape(out))
         return hook
 
+    was_training = model.training
+    model.eval()
     handles = [m.register_forward_hook(make_hook(n))
                for n, m in model.named_modules() if n != '']
     try:
@@ -73,32 +85,57 @@ def trace(model, *args, show_params=True, **kwargs):
             h.remove()                       # ★ 必须移除，否则记录会累积
         model.train(was_training)            # 恢复原来的训练/推理状态
 
-    if show_params:
-        print('  %-34s %-22s %-16s %-16s %s'
-              % ('模块', '类型', '输入', '输出', '自身参数'))
-        print('  ' + '-' * 104)
-    else:
-        print('  %-34s %-22s %-16s %s' % ('模块', '类型', '输入', '输出'))
-        print('  ' + '-' * 92)
-
-    for name, typ, i_s, o_s, n in rec:
-        depth = name.count('.')
-        label = '│ ' * depth + name.split('.')[-1]
-        if show_params:
-            print('  %-34s %-22s %-16s %-16s %s'
-                  % (label, typ, i_s, o_s, format(n, ',') if n else ''))
-        else:
-            print('  %-34s %-22s %-16s %s' % (label, typ, i_s, o_s))
-
-    if show_params:
-        print('  ' + '-' * 104)
-    else:
-        print('  ' + '-' * 92)
-
     total = sum(p.numel() for p in model.parameters())
-    print('  总计：%d 层模块，%s 个参数（%.2f MB float32）'
-          % (len(rec), format(total, ','), total * 4 / 1024 / 1024))
-    return rec
+    print('总参数 %s 个（%.2f MB float32）'
+          % (format(total, ','), total * 4 / 1024 / 1024))
+    print()
+
+    # ── 2. 按模块树递归打印 ──
+    def rec(mod, full_name, indent, is_last, label, note=''):
+        conn = '└─ ' if is_last else '├─ '
+        n_params = sum(p.numel() for p in mod.parameters())
+        own = sum(p.numel() for p in mod.parameters(recurse=False))
+
+        line = '%s%s%s : %s' % (indent, conn, label, type(mod).__name__)
+        shp = shapes.get(full_name)
+        if shp:
+            line += '  %s → %s' % shp
+        if show_params and n_params:
+            # 星号标出"参数就在这一层"（叶子），没星号说明在子模块里
+            line += '  %s %s' % ('★' if own == n_params else ' ', format(n_params, ','))
+        if note:
+            line += '   ' + note
+        print(line)
+
+        kids = list(mod.named_children())
+        if not kids:
+            return
+        depth = indent.count('│') + indent.count('   ')
+        if max_depth is not None and depth >= max_depth:
+            print('%s   …（还有 %d 个子模块，已省略）'
+                  % (indent + ('   ' if is_last else '│  '), len(kids)))
+            return
+
+        sub = indent + ('   ' if is_last else '│  ')
+
+        # 同类型重复 → 折叠成 ×N，只展开第一个
+        if collapse and len(kids) > 1 and len({type(c) for _, c in kids}) == 1:
+            first_name, first_mod = kids[0]
+            rec(first_mod,
+                full_name + '.' + first_name if full_name else first_name,
+                sub, True, first_name or '[0]',
+                '×%d 个（只展开第 1 个，其余完全相同）' % len(kids))
+            return
+
+        for i, (name, child) in enumerate(kids):
+            child_full = (full_name + '.' + name) if full_name else name
+            rec(child, child_full, sub, i == len(kids) - 1, name or '[%d]' % i)
+
+    rec(model, '', '', True, 'model')
+
+    print()
+    print('★ 表示参数就在这一层（叶子模块）；没有 ★ 的是容器，参数在子模块里')
+    return shapes
 
 
 def param_summary(model):
