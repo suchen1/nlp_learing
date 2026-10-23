@@ -1183,6 +1183,41 @@ trace(model, src, tgt, src_mask=src_mask, tgt_mask=tgt_mask)
 
 **★ 还能直接看出"源句 10 词、目标句 8 词"** —— `encoder` 是 `(2,10,512)`，`decoder` 是 `(2,8,512)`，这正是交叉注意力要处理的长度差异。
 
+#### 10. 疑问与澄清：学 Transformer 时的真实困惑
+
+> 这一节记的是**我看课时实际问出来的问题**和当时的澄清，按出现顺序排列，每个都带验证过的数字。
+
+| # | 我的疑问 | 澄清 | 关键证据 |
+| --- | --- | --- | --- |
+| 1 | 自注意力是"当前输入和之前输入的关系"，交叉注意力是"当前输入和编码器输出**那个包含所有信息的向量**的关系"？ | **前半对，后半要改**。编码器输出**不是"一个向量"**，而是 `L_src` 个向量（每个源词一个）。交叉注意力 = 解码器每个位置**逐个查阅** `L_src` 个源词 —— 这正是 Transformer 相对 RNN 没有信息瓶颈的地方 | `memory (2,4,8)` = 4 个源词各一个向量；分数矩阵 `(B,h,L_tgt,L_src)` 是**矩形** |
+| 2 | 交叉注意力 K/V 是 `(B,L_src,d_model)`、Q 是 `(B,L_tgt,d_model)`，维度不一样不会报错吗？ | 只要 `B` 和**最后一维** `d_model` 相同就行。`q@kᵀ` 会把 `d_model` 吃掉，`attn@v` 会把 `L_src` 吃掉 | `(2,3,512)@(2,512,4)=(2,3,4)`；`(2,3,4)@(2,4,512)=(2,3,512)` |
+| 3 | 交叉注意力还需要"不看后面"吗？两个词数不同的话，掩码不就变成 N×M 了吗？ | **完全想对了**。交叉注意力**不需要因果掩码**（源句完整，没有"未来"），掩码是 `(B,L_tgt,L_src)` 的矩形。**★ 但 `src_mask` 同时要喂编码器自注意力，所以唯一通用形状是 `(B,1,L_src)`** | `(B,L_src,L_src)` 只能喂编码器，`(B,L_tgt,L_src)` 只能喂交叉注意力；`L_src=8,L_tgt=5` 时前者直接崩 |
+| 4 | 交叉注意力矩阵应该长什么样？ | **每一行都是满的**（每个目标位置都能看全部源词）。若出现"上三角全 0"，就是因果掩码被错用了 | 误用时位置 0 只看到源位置 0：`[1.000, 0, 0]`，丢掉 2/3 的信息 |
+| 5 | `use_transformer` 跑通了是不是就没问题了？ | **能跑 ≠ 对**。forward 不报错只说明形状对，还得测四项：因果性 / 位置编码 / padding mask / 梯度 | 全 1 掩码下改末词，位置 0 输出变了 **0.111** → 偷看未来，**不报错** |
+| 6 | Encoder 也要 mask？它又不"生成"，挡什么？ | Encoder 需要的是 **padding 掩码**，不是因果掩码。batch 里句长短不一要补齐，补出来的 PAD 是垃圾：不 mask 时 PAD 分走约 **40%** 注意力，且 PAD 位置会产出垃圾向量被下一层真实词看到 | `L=5` 含 2 个 PAD 时，真实词注意力占比只剩 **58.5%** |
+| 7 | `forward` 已经走完全程了，为什么还要单独定义 `encoder`/`decode` 两个函数？ | 不重复，是分层封装。**推理时编码器只跑一次**（`memory` 缓存），再反复调解码器生成每个词；只有 `forward` 的话每步都要重跑编码器 | 生成 10 个词：每步重跑 **0.89 ms** vs 编码一次复用 **0.11 ms**（慢 **8.1 倍**） |
+| 8 | 我都传了实体 `encoder` 了，直接 `self.encoder(...)` 不就好了？为什么还要 `def encoder`？ | **我的直觉是对的**。课程那层包装**撞名**了：`nn.Module` 把模块存进 `_modules`（不进 `__dict__`），同名方法胜出 → `self.encoder` 指向方法自己 → **无限递归** | `type(m.encoder) = method`；`RecursionError`。而 `decode` 没事（属性叫 `decoder`，多一个 `r`） |
+| 9 | 论文是这样写的吗？但我这样写**没有位置编码**吧？ | 论文确实把位置编码加在 embedding 之后（实现里打包进 `src_embed`）。**而且我确实漏了** —— `PositionalEncoding` 定义了却从没被调用 | 只有 `Embedding`：换词序输出差 **0.000001**（数学上相等）；有位置编码：**0.522509** |
+| 10 | `nn.init.xavier_uniform_` 那三行是干嘛的？论文附录 B 写的吗？ | 把 2 维以上的权重矩阵重新随机（`dim()>1` 是为了**跳过 bias**，bias 必须为 0）。**出处不是论文附录**，是官方参考实现（原注释 `# This was important from their code.`） | 副作用：`Embedding.weight` 也是 2 维会被一起 Xavier，std 从 1.0 压到 **0.0073**（小 137 倍） |
+| 11 | 那**不写**那三行有问题吗？ | 小模型/学习阶段差别很小（150 步后 loss 2.6289 vs 2.6219）。原因：第一层 LayerNorm 会把整体尺度抹平 | `encoder` 输出 std 两边都是 **0.9923** |
+| 12 | 打印出来的模块树看不懂，到底谁是谁的分支？ | `sublayers` 和 `self_attn` 在对象树上是**兄弟**，因为 `SublayerConnection` 是"回调式"设计（`forward(x, sublayer)` 接收函数），包裹关系只在调用里，不在对象树上 | `x = self.sublayers[0](x, lambda t: self.self_attn(t, t, t, mask))` |
+| 13 | docstring 悬停显示的内容为什么比官方的少？ | 官方 `math.sqrt` 有**摘要行**（`Return the square root of x.`）。我的 docstring 一上来就是 `:param:`，没有摘要行 → 悬停只剩 `Parameters` 面板 | 规则：摘要行 → 空行 → 详细说明 → 空行 → `:param:` / `:return:` |
+
+#### 11. ⇩ Transformer 还缺什么（课程 P143 之后不再讲，留待空闲补）
+
+**课程讲完架构就跳到 Fasttext 了，全程没讲怎么训练这个 Transformer。** 目前 `dm09` 只能 forward，还不能翻译句子。要补的四块：
+
+| # | 缺什么 | 作用 | 备注 |
+| --- | --- | --- | --- |
+| 1 | `make_pad_mask` / `make_causal_mask` / `make_tgt_mask` | 三个掩码构造函数 | ★ `src_mask` 必须是 `(B,1,L_src)`；`tgt_mask` 用 `tril` |
+| 2 | `encode` / `decode` 两个方法 | 分离编码与解码，推理时缓存 `memory` | ★ 名字别叫 `encoder`（见踩坑 15） |
+| 3 | `greedy_decode` | 自回归生成：从 SOS 起，每步取 argmax，遇 EOS 停 | 推理入口 |
+| 4 | `SimpleLossCompute` + 训练循环 | `CrossEntropyLoss(ignore_index=PAD)` + Adam + warmup | 复用 `英译法/` 的 `my_collate` 与词表 |
+| 5 | 数据管道 | `英译法/data/eng-fra-v2.txt`（63,594 句对）+ 词表 | EN **2803** / FR **4345** |
+
+**参考规模**：`d_model=512, N=6, heads=8, d_ff=2048` → 45.7 M 参数（vocab=1000）；换成实际词表约 **48 M**。
+在 RTX 5060 Ti 上可与 `英译法/` 的 GRU 版做对照实验（GRU 版 batch=32 峰值 **98.5%**）。
+
 ## 环境
 
 | 项 | 版本 / 说明 |
