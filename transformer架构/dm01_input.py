@@ -3,14 +3,9 @@ os.system('cls' if os.name == 'nt' else 'clear')     # 先清屏再跑
 import torch
 import torch.nn as nn
 import math
-
 class Embedding(nn.Module):
-    """嵌入层
-    :param vocab_size: 词汇表大小
-    :param d_model: 嵌入维度
-    """
     def __init__(self, vocab_size, d_model):
-        """
+        """嵌入层
         :param vocab_size: 词汇表大小
         :param d_model: 嵌入维度
         """
@@ -24,13 +19,8 @@ class Embedding(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    """位置编码层
-    :param d_model: 嵌入维度
-    :param max_len: 最大序列长度
-    :param dropout: dropout率
-    """
     def __init__(self, d_model, max_len=100,dropout=0.1):
-        """
+        """位置编码层
         :param d_model: 嵌入维度
         :param max_len: 最大序列长度
         :param dropout: dropout率
@@ -51,7 +41,9 @@ class PositionalEncoding(nn.Module):
 
 
 def use_position():
-
+    """
+    使用位置编码
+    """
     vocab_size = 1000
     d_model = 512
     max_len = 1000

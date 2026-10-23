@@ -62,7 +62,8 @@ def attention(q, k, v, mask=None, dropout=None):
     d_k = q.size(-1)
     scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)  # (B, H, L_q, d_k) * (B, H, d_k, L_k) -> (B, H, L_q, L_k)
     if mask is not None:
-        scores = scores.masked_fill(mask == 0, float('-inf'))
+        # scores:[B, H, L_q, L_k],mask:[B, 1, L_q, L_k]，mask为0的位置表示不允许关注
+        scores = scores.masked_fill(mask == 0, float('-inf')) 
     p_attn = F.softmax(scores, dim=-1)  # (B, H, L_q, L_k)
     if dropout is not None:
         p_attn = dropout(p_attn)
@@ -99,7 +100,7 @@ class Multi_Head_Attention(nn.Module):
         :return: 注意力输出 (B, L_q, d_model)
         """
         batch_size = q.size(0)
-        if mask is not None:
+        if mask is not None and mask.dim() == 3:
             mask = mask.unsqueeze(1)  # (B, 1, L, L)
         # 线性变换并分头
         q = self.linear_q(q).view(batch_size, -1, self.h, self.d_k).transpose(1, 2)  # (B, L, H, d_k) -> (B, H, L, d_k)
