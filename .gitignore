@@ -14,3 +14,5 @@ __pycache__/
 *.pyc
 .idea/
 .vscode/
+Fasttest/model
+Fasttest/data
