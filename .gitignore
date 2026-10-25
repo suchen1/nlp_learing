@@ -16,3 +16,4 @@ __pycache__/
 .vscode/
 Fasttest/model
 Fasttest/data
+迁移学习/model
