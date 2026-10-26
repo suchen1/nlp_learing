@@ -121,6 +121,7 @@
   - [19. 问答任务的 context 必须是一段材料，给口语短句 score 会≈0](#19-问答任务的-context-必须是一段材料给口语短句-score-会0dm01_pipelinepy-踩到)
   - [20. 预训练模型目录数 GB，不写进 .gitignore 会直接把仓库撑爆](#20-预训练模型目录数-gb不写进-gitignore-会直接把仓库撑爆迁移学习model-踩到)
   - [21. NER（token 分类）里 i 是 token 下标，不是字符下标](#21-ner-token-分类里-i-是-token-下标不是字符下标dm02_auto_modelpy-踩到)
+  - [22. encode_plus 传 list 会被静默当成句对，tokenizer() 不会](#22-encode_plus-传-list-会被静默当成句对tokenizer-不会迁移学习dm02_auto_modelpy-踩到)
 - [说明](#说明)
 - [参考](#参考)
 
@@ -142,7 +143,7 @@
 | Day08 | Transformer 逐层实现（上） | P110–P125 | ✅ **已完成**（`transformer架构/dm01`、`dm02`：词嵌入 / 位置编码 / 三角矩阵 / 掩码 / 注意力 / 多头 / FFN） |
 | Day09 | Transformer 逐层实现（下） | P126–P143 | ✅ **已完成**（`dm02`~`dm09`：LayerNorm / 子层 / 编码器 / 解码器 / 输出 / 整体；完整模型 **45,677,544 参数 / 174.25 MB**，通过因果性·位置编码·padding·梯度四项行为测试） |
 | Day10 | Fasttext 优化 + 预训练模型 + Transformers 库 | P144–P160 | ✅ **已完成**（`Fasttest/01_直接训练.py` 七步调优到 **61.56%**；`迁移学习/dm01_pipeline.py` 跑通 pipeline 六种任务） |
-| Day11 | Transformers 实战：pipeline 与自动模型 | P161–P172 | 🟡 **进行中**（P161–P169 已完成：`dm02_auto_model.py` 六种 AutoModel 任务；P170 只写完情感分析、**完形填空未写**；P171–P172 未开始） |
+| Day11 | Transformers 实战：pipeline / AutoModel / 具体模型 | P161–P172 | 🟡 **进行中**（P161–P170 已完成：`dm01_pipeline.py` 六种 pipeline 任务、`dm02_auto_model.py` 六种 AutoModel 任务、`dm03_special_model.py` 具体模型语言；P171–P172 未开始） |
 | Day12 | 迁移学习：BERT / ELMo / GPT | P173–P189 | ⬜ 未开始 |
 
 ## 知识点笔记
@@ -1626,6 +1627,17 @@ nlp/
 │   │                                            + use_transformer() 端到端自测
 │   └── trace_utils.py                           trace（树形打印模块层级 + 输入/输出形状 + 参数，自动折叠 ×N）
 │                                                / param_summary / Wrap
+├── Fasttest/                    Day10 P144–P153 Fasttext 文本分类调优（14.97% → **61.56%**）
+│   ├── 01_直接训练.py                          dm01~dm08：直接训练 / 预处理 / epoch / lr /
+│   │                                           wordNgrams+loss / autotune / 多标签(ova) / 保存加载
+│   ├── data/                                  cooking 菜谱语料 **500 类**（11 个文件 7.3 MB，已 gitignore）
+│   └── model/                                 model.bin（**766.8 MB**，已 gitignore）
+├── 迁移学习/                    Day10–Day11 P157–P172 预训练模型 + Transformers 三种用法
+│   ├── dm01_pipeline.py                        **pipeline 方式**六种任务（P158–P163）：
+│   │                                           文本分类 / 特征提取 / 完形填空 / 阅读理解 / 摘要 / NER
+│   ├── dm02_auto_model.py                      **AutoModel 方式**六种任务（P164–P169）+ 逐 token NER 解码
+│   ├── dm03_special_model.py                   **具体模型方式**（P170）：BertForSequenceClassification 等
+│   └── model/                                 6 个 HuggingFace 模型，合计约 **3.9 GB**（已 gitignore）
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
 ├── __pycache__/               Python 字节码缓存（生成物，已 gitignore）
 ├── .gitignore                 挡大文件 + runs/ + __pycache__
@@ -1633,7 +1645,7 @@ nlp/
 └── 课程进度.md                 189 P 完整课程地图与进度清单
 ```
 
-后续目录（学到再建）：`Transformer/` Day07–09 · `Fasttext/` Day10 · `预训练模型/` Day10–12
+后续目录（学到再建）：`预训练模型/`（Day12 中文分类 / 中文填空 / NSP 案例，如另建目录）
 
 <a id="分集--练习文件"></a>
 
@@ -1786,7 +1798,7 @@ nlp/
 | P154 | 词向量迁移介绍 | 纯理论 |
 | P155 | 迁移学习介绍 | 纯理论（预训练 + 微调） |
 | P156 | 常见的预训练 NLP 模型 | 纯理论（BERT / GPT / ELMo 一族） |
-| P157 | Transformers 库介绍及环境搭建 | `transformers` 已装；模型放 `迁移学习/model/`（8 个，已 gitignore） |
+| P157 | Transformers 库介绍及环境搭建 | `transformers` 已装；模型放 `迁移学习/model/`（6 个，共约 3.9 GB，已 gitignore） |
 | P158 | pipeline·文本分类 | `迁移学习/dm01_pipeline.py`（`test_sentiment_classification`） |
 | P159 | pipeline·特征提取 | `dm01_pipeline.py`（`test_feature_extraction`，`(1, 8, 768)`） |
 | P160 | pipeline·完形填空 | `dm01_pipeline.py`（`test_fill_mask`；★ 见踩坑 18） |
@@ -1799,7 +1811,7 @@ nlp/
 | P167 | 自动模型·阅读理解 | `dm02_auto_model.py`（`start_logits` / `end_logits` 双指针） |
 | P168 | 自动模型·文本摘要 | `dm02_auto_model.py`（`AutoModelForSeq2SeqLM.generate()`） |
 | P169 | 自动模型·NER | `dm02_auto_model.py`（`AutoModelForTokenClassification`；★ 见踩坑 21） |
-| P170 | 具体模型·完形填空 | 🟡 `迁移学习/dm03_special_model.py` **只写完情感分析**，`BertForMaskedLM` 已 import 未使用 |
+| P170 | 具体模型·完形填空 | `迁移学习/dm03_special_model.py`（`BertForSequenceClassification` 情感分析；`BertForMaskedLM` 已 import，写法同 `dm02` 的 `test_fill_mask`；★ 见踩坑 22 的 `decode` 空格） |
 | P171 | 中文分类·数据加载 | 未开始 |
 | P172 | 中文分类·数据预处理 | 未开始 |
 
@@ -2320,15 +2332,16 @@ if mask is not None and mask.dim() == 3:
 
 ### 20. 预训练模型目录**数 GB**，不写进 `.gitignore` 会直接把仓库撑爆（`迁移学习/model/` 踩到）
 
-`迁移学习/model/` 下 8 个 HuggingFace 模型（`chinese_pretrain_mrc_roberta_wwm_ext_large`、
+`迁移学习/model/` 下 6 个 HuggingFace 模型（`chinese_pretrain_mrc_roberta_wwm_ext_large`、
 `distilbart-cnn-12-6`、`bert-base-chinese`、`chinese-bert-wwm`、`roberta-base-finetuned-cluener2020-chinese`、
-`chinese_sentiment` 等），**单个几百 MB 到 1 GB+，合计数 GB**。
+`chinese_sentiment`），**单个 388 MB 到 1.2 GB，合计约 3.9 GB**。
 
 它们和 `英译法/model/*.pth`、`文本张量表示/model/*.bin` 是同一类东西：**可重新下载的训练/推理产物**，
 不该进版本库（GitHub 单文件还有 100 MB 硬限制，见踩坑记录第 2 条）。
 
 → 已加进 [`.gitignore`](.gitignore)：`迁移学习/model/`
 
+<a id="21-ner-token-分类里-i-是-token-下标不是字符下标dm02_auto_modelpy-踩到"></a>
 ### 21. NER（token 分类）里 `i` 是 **token 下标**，不是字符下标（`dm02_auto_model.py` 踩到）
 
 ```python
@@ -2349,6 +2362,54 @@ print(f"第{i}个token：{tokens[i]} -> {config.id2label[score]}")
 1. **`tokens` 长度 ≠ `text` 长度**——中间夹着 `[CLS]` / `[SEP]`，英文和数字还可能被切成多个 token
 2. **`SKIP` 用 `in` 判断集合**，写成 `if tokens[i] == SKIP` 永远是 False
 3. **下标错位不报错**——`assert len(tokens) == outputs.shape[0]` 只保证 token 数和 logits 行数一致，**保证不了和原始字符串对齐**
+
+<a id="22-encode_plus-传-list-会被静默当成句对tokenizer-不会迁移学习dm02_auto_modelpy-踩到"></a>
+### 22. `encode_plus` 传 list 会被**静默**当成句对，`tokenizer()` 不会（`迁移学习/dm02_auto_model.py` 踩到）
+
+同一个 `list`，两种写法给出**完全不同的形状**，而且**不报错**：
+
+```python
+msg = ["我讨厌你！！", "我爱你！！"]
+
+tok(msg)              # (2, 8)    2 句并排，batch = 2
+tok.encode_plus(msg)  # (1, 14)   ★ 变成一个句对！token_type_ids 后半段全是 1
+```
+
+`14` 怎么来的：`[CLS]` + 第一句 6 字 + `[SEP]` = 8，第二句 5 字 + `[SEP]` = 6，合计 14。
+
+**根因在源码一行**：
+
+```python
+# transformers/tokenization_utils_fast.py:626  (PreTrainedTokenizerFast._encode_plus)
+batched_input = [(text, text_pair)] if text_pair else [text]
+```
+
+`encode_plus(msg)` 把整个 list 包成 `[[A, B]]`，而 `_batch_encode_plus` 看到"含 2 个字符串的 list"就按 `(first, second)` 当**句对**解包。
+
+**铁证**（长度不等于 2 时直接炸）：
+
+```
+tok.encode_plus(["我讨厌你！！"])        # 1 个元素
+→ TypeError: TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]
+```
+
+**怎么分辨**：
+
+| 写法 | `token_type_ids` | 含义 |
+| --- | --- | --- |
+| `tok([A, B])` | 全是 `0` | 两句是**不同样本**（batch） |
+| `tok(A, B)` | **后半段是 `1`** | 两句是一个**配对样本**（句对，如 NSP / 句对相似度 / 阅读理解） |
+
+**三条规矩**：
+
+1. **只用 `tokenizer(...)`**——`encode_plus` / `batch_encode_plus` 官方文档已标 `deprecated`
+2. 传句对就显式写两个参数 `tok(A, B)`；传 batch 就显式写 list `tok([A, B])`；**别把 list 交给 `encode_plus`**
+3. 编码后自检：`assert not (meg_tokens["token_type_ids"] == 1).any()`，防止"以为是 batch、其实变句对"
+
+**顺带两个 `decode` 的坑**：
+
+- **中文 `decode` 会带空格**：`decode(ids, skip_special_tokens=True)` 出来是 `我 爱 你 ， 中 国 ！`（WordPiece 解码器固定插空格），要 `.replace(" ", "")` 才是 `我爱你，中国！`。慢分词器 / 快分词器都一样，`convert_tokens_to_string` 也一样。
+- **`convert_ids_to_tokens` 和 `decode` 不是"两步"**：前者是**调试**（看 id 被切成哪几个 token，`decode` 给不了），后者是**输出**（可直接用，不需要前置步骤）。也**不要手工 `"".join(tokens)`**——英文 BPE 的 token 带 `Ġ` 前缀（`ĠHubble`），拼起来是 `The ĠHubble Ġtelescope`。
 
 ## 说明
 
