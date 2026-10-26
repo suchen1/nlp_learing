@@ -14,7 +14,7 @@
 
 <!-- TOC -->
 <details>
-<summary><b>📑 目录（点击展开 · 92 个锚点）</b></summary>
+<summary><b>📑 目录（点击展开 · 107 个锚点）</b></summary>
 
 - [学习进度](#学习进度)
 - [知识点笔记](#知识点笔记)
@@ -82,6 +82,17 @@
     - [9. trace_utils.py：树形看结构](#9-trace_utilspy树形看结构)
     - [10. 疑问与澄清：学 Transformer 时的真实困惑](#10-疑问与澄清学-transformer-时的真实困惑)
     - [11. ⇩ Transformer 还缺什么（课程 P143 之后不再讲，留待空闲补）](#11--transformer-还缺什么课程-p143-之后不再讲留待空闲补)
+  - [Day10 Fasttext 优化 + 预训练模型（P144–P160）](#day10-fasttext-优化--预训练模型p144p160)
+    - [1. ★ 七步调优：14.97% → 61.56%](#1--七步调优1497--6156)
+    - [2. `loss` 三种取值怎么选](#2-loss-三种取值怎么选)
+    - [3. 多标签预测：`predict(text, k, threshold)`](#3-多标签预测predicttext-k-threshold)
+    - [4. 预训练模型：`pipeline` 上手（P158–P160）](#4-预训练模型pipeline-上手p158p160)
+  - [Day11 Transformers 实战：pipeline / AutoModel / 具体模型（P161–P172）](#day11-transformers-实战pipeline--automodel--具体模型p161p172)
+    - [1. 同一件事的三种写法（这是 Day11 的主线）](#1-同一件事的三种写法这是-day11-的主线)
+    - [2. 六个任务：各看哪个输出](#2-六个任务各看哪个输出)
+    - [3. ★ 三类输出头，三种解码方式](#3--三类输出头三种解码方式)
+    - [4. 推理三件套（每个任务都要写）](#4-推理三件套每个任务都要写)
+    - [5. 模型目录里的文件各是什么](#5-模型目录里的文件各是什么)
 - [环境](#环境)
   - [依赖现状（2026 年排查，基于 nlpbase）](#依赖现状2026-年排查基于-nlpbase)
     - [GPU 版 PyTorch（✅ 2026-10-10 已装好，命令留档备查）](#gpu-版-pytorch-2026-10-10-已装好命令留档备查)
@@ -106,6 +117,10 @@
   - [15. nn.Module 里方法名和属性名撞了会无限递归，且 get_submodule 直接崩](#15-nnmodule-里方法名和属性名撞了会无限递归且-get_submodule-直接崩transformer架构-踩到)
   - [16. 位置编码没接上，模型完全分不出词序，但照样能训](#16-位置编码没接上模型完全分不出词序但照样能训transformer架构dm09_transformerpy-踩到)
   - [17. mask 传 4 维会被 unsqueeze(1) 加成 5 维，报错却在 permute 里](#17-mask-传-4-维会被-unsqueeze1-加成-5-维报错却在-permute-里dm02_encoder_elementpy-踩到)
+  - [18. chinese-bert-wwm 没有 MLM 头，fill-mask 会吐出繁体乱码](#18-chinese-bert-wwm-没有-mlm-头fill-mask-会吐出繁体乱码迁移学习dm01_pipelinepy-踩到)
+  - [19. 问答任务的 context 必须是一段材料，给口语短句 score 会≈0](#19-问答任务的-context-必须是一段材料给口语短句-score-会0dm01_pipelinepy-踩到)
+  - [20. 预训练模型目录数 GB，不写进 .gitignore 会直接把仓库撑爆](#20-预训练模型目录数-gb不写进-gitignore-会直接把仓库撑爆迁移学习model-踩到)
+  - [21. NER（token 分类）里 i 是 token 下标，不是字符下标](#21-ner-token-分类里-i-是-token-下标不是字符下标dm02_auto_modelpy-踩到)
 - [说明](#说明)
 - [参考](#参考)
 
@@ -126,8 +141,8 @@
 | Day07 | 英译法案例（下）+ Transformer 登场 | P96–P109 | ✅ **已完成**。P96–P104 的内容此前已**自己实现**（注意力解码器 / 训练 / 预测），P105 张量图 + P106 Transformer 由来为纯理论，P107–P109 Transformer 架构（编码器–解码器骨架） |
 | Day08 | Transformer 逐层实现（上） | P110–P125 | ✅ **已完成**（`transformer架构/dm01`、`dm02`：词嵌入 / 位置编码 / 三角矩阵 / 掩码 / 注意力 / 多头 / FFN） |
 | Day09 | Transformer 逐层实现（下） | P126–P143 | ✅ **已完成**（`dm02`~`dm09`：LayerNorm / 子层 / 编码器 / 解码器 / 输出 / 整体；完整模型 **45,677,544 参数 / 174.25 MB**，通过因果性·位置编码·padding·梯度四项行为测试） |
-| Day10 | Fasttext 优化 + 预训练模型 + Transformers 库 | P144–P160 | ⬜ 未开始 |
-| Day11 | Transformers 实战：pipeline 与自动模型 | P161–P172 | ⬜ 未开始 |
+| Day10 | Fasttext 优化 + 预训练模型 + Transformers 库 | P144–P160 | ✅ **已完成**（`Fasttest/01_直接训练.py` 七步调优到 **61.56%**；`迁移学习/dm01_pipeline.py` 跑通 pipeline 六种任务） |
+| Day11 | Transformers 实战：pipeline 与自动模型 | P161–P172 | 🟡 **进行中**（P161–P169 已完成：`dm02_auto_model.py` 六种 AutoModel 任务；P170 只写完情感分析、**完形填空未写**；P171–P172 未开始） |
 | Day12 | 迁移学习：BERT / ELMo / GPT | P173–P189 | ⬜ 未开始 |
 
 ## 知识点笔记
@@ -1368,6 +1383,125 @@ def greedy_decode(model, src, src_mask, max_len=50, sos=0, eos=1):
 **参考规模**：`d_model=512, N=6, heads=8, d_ff=2048` → 45.7 M 参数（vocab=1000）；换成实际词表约 **48 M**。
 在 RTX 5060 Ti 上可与 `英译法/` 的 GRU 版做对照实验（GRU 版 batch=32 峰值 **98.5%**）。
 
+### Day10 Fasttext 优化 + 预训练模型（P144–P160）
+
+代码：[`Fasttest/01_直接训练.py`](Fasttest/01_直接训练.py)（`dm01`~`dm08`）｜ [`迁移学习/dm01_pipeline.py`](迁移学习/dm01_pipeline.py)
+数据：cooking.stackexchange 菜谱文本，**500 个类别**，验证集 3000 条
+<br>指标：`test()` 返回 `(样本数, 准确率, 召回率)` —— 本项目类别是单标签，两者数值不同是因为 fasttext 默认按 `k=-1` 算召回
+
+#### 1. ★ 七步调优：**14.97% → 61.56%**
+
+| # | 函数 | 改了什么 | 准确率 | 涨幅 |
+| --- | --- | --- | --- | --- |
+| ① | `dm01_normal` | `train_supervised(input=...)` 全用默认 | **14.97%** | — |
+| ② | `dm02_preprocess` | 换成预处理过的 `cooking.pre.train` | 15.37% | +0.40 |
+| ③ | `dm03_epoch` | **`epoch=50`**（默认 5） | **55.67%** | **+40.30** |
+| ④ | `dm04_lr` | 再 `lr=0.3`（默认 0.1） | 56.33% | +0.66 |
+| ⑤ | `dm05_ngram_loss` | `wordNgrams=2` + `loss='hs'` | 59.70% | +3.37 |
+| ⑥ | `dm06_auto` | `autotuneValidationFile` + `autotuneDuration=600` | 59.70% | 0 |
+| ⑦ | `dm07_multi_label` | `loss='ova'` | **61.56%** | +1.86 |
+
+**四个结论：**
+
+1. **`epoch` 是唯一的关键项**——5 → 50 一次涨 40 个点，比后面所有调优加起来还多。默认 5 轮对这个小数据集**严重欠拟合**。
+2. **自动调参没赢过手动**：600 秒内它自己挑到的组合和 ⑤ 完全一样（都是 59.70%）。**先把 epoch 和 lr 摸清，autotune 才有意义**。
+3. **`loss='ova'` 才是最优**（不是课程主打 `hs`）：本数据集一句话可能属于多个类，one-vs-all 更贴合。
+4. **准确率天花板 61.56%** 是任务本身决定的——500 类、每类样本很少，`cooking` 这个数据集本来就难。
+
+#### 2. `loss` 三种取值怎么选
+
+| `loss` | 含义 | 什么时候用 | 本项目 |
+| --- | --- | --- | --- |
+| `softmax` | 默认，全词表 softmax | 单标签、类别不多 | ①②③④ 基线 |
+| `hs` | hierarchical softmax，用**哈夫曼树**把 O(V) 降到 O(log V) | 类别很多 | ⑤ |
+| `ova` | one-vs-all，每个类独立判一次 | **多标签**（一句可属多类） | ⑦ 最优 |
+
+`hs` 就是 P145/P146 讲的**哈夫曼树 + 负采样**的落地实现——理论两集，代码只是一个字符串参数。
+
+#### 3. 多标签预测：`predict(text, k, threshold)`
+
+```python
+model2.predict("How to make a cake ?", k=3, threshold=0.1)
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `k` | 最多返回几个标签（`ova` 下才可能多于 1 个） |
+| `threshold` | 概率门槛，低于它的不返回 |
+
+#### 4. 预训练模型：`pipeline` 上手（P158–P160）
+
+```python
+from transformers import pipeline
+
+classifier     = pipeline(task="sentiment-analysis", model="./model/chinese_sentiment")
+feature_extract = pipeline(task="feature-extraction", model="./model/bert-base-chinese")
+fill_mask      = pipeline(task="fill-mask",        model="./model/bert-base-chinese")
+```
+
+- **`model` 要传"带该任务头的模型目录"**，不是同名底座模型——见踩坑记录第 18、19 条
+- `feature-extraction` 输出形状 `(1, 8, 768)`：1 个句子 / 8 个 token（含 `[CLS]`、`[SEP]`）/ 768 = **12 头 × 64 维**
+- 每个任务对应一个 `*ForXxx` 类，模型目录里的 `config.json → architectures` 决定了它能不能干这件事
+
+### Day11 Transformers 实战：pipeline / AutoModel / 具体模型（P161–P172）
+
+代码：[`迁移学习/dm01_pipeline.py`](迁移学习/dm01_pipeline.py)｜[`dm02_auto_model.py`](迁移学习/dm02_auto_model.py)｜[`dm03_special_model.py`](迁移学习/dm03_special_model.py)
+
+#### 1. 同一件事的三种写法（这是 Day11 的主线）
+
+| 写法 | 代码量 | 能拿到什么 | 什么时候用 | 文件 |
+| --- | --- | --- | --- | --- |
+| `pipeline` | **1 行** | 只有最终结果，**拿不到 logits** | 快速验证模型能不能用 | `dm01` |
+| `AutoModel*` | 3~5 行 | logits / hidden_state，全都能看 | **绝大多数场景** | `dm02` |
+| `BertModel` 等具体类 | 同上 | 还能改结构、换头 | 要魔改模型时 | `dm03` |
+
+`AutoModel*` 会根据 `config.json` 自动选对类，所以是"通用写法"；具体类（`BertForMaskedLM`）把这件事写死，可读性更好但只认 BERT 系。
+
+#### 2. 六个任务：各看哪个输出
+
+| 任务 | `pipeline(task=...)` | `AutoModel` 类 | 输出 | 拿到后怎么用 |
+| --- | --- | --- | --- | --- |
+| 情感分类 | `sentiment-analysis` | `AutoModelForSequenceClassification` | `logits (B, num_labels)` | `softmax → argmax → config.id2label` |
+| 特征提取 | `feature-extraction` | `AutoModel` | `last_hidden_state (B, L, H)` | 直接当句/词向量 |
+| 完形填空 | `fill-mask` | `AutoModelForMaskedLM` | `logits (B, L, vocab)` | 取 `[MASK]` 位置的 `argmax` |
+| 阅读理解 | `question-answering` | `AutoModelForQuestionAnswering` | `start_logits` / `end_logits (B, L)` | 两个指针各自 `argmax`，再切片 decode |
+| 文本摘要 | `summarization` | `AutoModelForSeq2SeqLM` | `generate()` 出的 token id | `decode` |
+| NER | `ner` | `AutoModelForTokenClassification` | `logits (B, L, num_tags)` | 逐 token `argmax` |
+
+**一句话记法**：任务不同 = **模型的输出头不同**；`AutoModelForXxx` 就是"把 Xxx 头接上去"的那个类。
+
+#### 3. ★ 三类输出头，三种解码方式
+
+```
+分类头      logits (B, num_labels)   → softmax → argmax → id2label 里的名字
+语言模型头  logits (B, L, vocab)     → 只在 [MASK] 那一行 argmax
+抽取消解头  start_logits/end_logits  → 两个 argmax 当指针，切片后 decode
+```
+
+**别把三者混用**：情感分析拿 `logits` 直接 `argmax` 就够了，不需要 softmax；
+完形填空必须**先定位 `[MASK]` 的行号**（`outputs.logits[0][5]`），整句 `argmax` 只会一直输出高频词。
+
+#### 4. 推理三件套（每个任务都要写）
+
+```python
+MyModel.eval()                 # ★ 关掉 dropout，否则同一个输入每次结果不一样
+with torch.no_grad():          # ★ 不建计算图，省显存、快
+    outputs = MyModel(**inputs) # ★ **inputs 直接展开
+```
+
+`MyModel.eval()` 漏了不会报错，只是**结果不稳定**——这是最容易忽略的一条。
+
+#### 5. 模型目录里的文件各是什么
+
+| 文件 | 作用 |
+| --- | --- |
+| `config.json` | 结构 + `architectures`（决定 `AutoModel*` 选哪个类）+ `id2label` |
+| `vocab.txt` | BERT 系词表（逐字中文） |
+| `tokenizer.json` / `tokenizer_config.json` | 分词器规则 |
+| `pytorch_model.bin` / `model.safetensors` | 权重 |
+
+**换模型只需要换目录**——这也是 `AutoModel.from_pretrained("./model/xxx")` 的意义。
+
 ## 环境
 
 | 项 | 版本 / 说明 |
@@ -1395,17 +1529,14 @@ def greedy_decode(model, src, src_mask, max_len=50, sos=0, eos=1):
 
 ### 依赖现状（2026 年排查，基于 `nlpbase`）
 
-**已装**：`tensorflow 2.19.0`、`torch 2.14.0+cu130`、`torchvision 0.29.0+cu130`、`tensorboard 2.19.0`、`fasttext-wheel 0.9.2`、`numpy 2.1.3`、`jieba 0.42.1`、`joblib 1.5.1`
+**已装**：`tensorflow 2.19.0`、`torch 2.14.0+cu130`、`torchvision 0.29.0+cu130`、`tensorboard 2.19.0`、`fasttext-wheel 0.9.2`、`numpy 2.1.3`、`jieba 0.42.1`、`joblib 1.5.1`、`pandas`、`matplotlib`（已配 `SimHei`）、`wordcloud`、**`transformers`**（Day10 起）、**`rich`**（`迁移学习/` 里用 `from rich import print`，彩色输出）
 
-课程接下来会用到、目前**还没装**：
+课程接下来会用到、目前**还没装 / 用不到**：
 
 | 依赖 | 从哪里开始需要 | 备注 |
 | --- | --- | --- |
-| `pandas` | Day02 文本分析（P26 起：标签分布、句子长度） | 还没装 |
-| `matplotlib` | Day02 句子长度分布、散点图、词云（P28–P32） | 记得配 `SimHei` 中文字体 |
-| `wordcloud` | Day02 高频形容词词云（P32） | 还没装 |
-| `scikit-learn` | 后面的评估、切分数据 | 还没装 |
-| `transformers` `datasets` | Day10–Day12 预训练模型与迁移学习 | 体积大，用到再装 |
+| `scikit-learn` | 中文分类案例的切分与评估（P173 起） | 到时候装 |
+| `datasets` | 课程 Day10–Day12 **没有**用到（数据自己准备） | 可以不装 |
 | `opencc` | 繁转简（Day01 提过） | 可选 |
 
 按课程进度**用到再装**，不要一上来全装 —— 环境干净，出问题好定位。
@@ -1642,6 +1773,35 @@ nlp/
 | P141 | 架构测试·上 | `dm09`（`use_transformer`；端到端 `(2,10)` + `(2,8)` → `(2,8,1000)`，无 NaN） |
 | P142 | 架构组件介绍 | 见 Day09 第 4 节（参数分布表） |
 | P143 | 架构测试·下 | 见 Day09 第 6 节（四项行为测试：因果性 / 位置编码 / padding / 梯度） |
+| P144 | Fasttext 简介及环境搭建 | `Fasttest/01_直接训练.py`（`fasttext-wheel`；数据集放 `Fasttest/data/`，已 gitignore） |
+| P145 | Fasttext 哈夫曼树 | 纯理论（层次 softmax 把 O(V) 降到 O(log V)，对应 `loss='hs'`） |
+| P146 | Fasttext 负采样 | 纯理论（用少量负样本替掉全词表 softmax） |
+| P147 | Fasttext 直接训练 | `Fasttest/01_直接训练.py`（`dm01_normal`，**14.97%**） |
+| P148 | Fasttext 数据预处理 | `dm02_preprocess`（**15.37%**） |
+| P149 | 调整训练轮数和学习率 | `dm03_epoch`（epoch=50 → **55.67%**）、`dm04_lr`（lr=0.3 → 56.33%） |
+| P150 | 调整 NGram 和损失函数 | `dm05_ngram_loss`（`wordNgrams=2` + `loss='hs'` → **59.70%**） |
+| P151 | 自动调参 | `dm06_auto`（`autotuneValidationFile` + `autotuneDuration=600`，挑到的组合与 P150 相同） |
+| P152 | 多分类多标签任务 | `dm07_multi_label`（`loss='ova'` → **61.56%，最优**；`predict(k=3, threshold=0.1)`） |
+| P153 | 模型保存和加载 | `dm08_save`（`save_model` / `load_model`，落盘 `Fasttest/model/model.bin`） |
+| P154 | 词向量迁移介绍 | 纯理论 |
+| P155 | 迁移学习介绍 | 纯理论（预训练 + 微调） |
+| P156 | 常见的预训练 NLP 模型 | 纯理论（BERT / GPT / ELMo 一族） |
+| P157 | Transformers 库介绍及环境搭建 | `transformers` 已装；模型放 `迁移学习/model/`（8 个，已 gitignore） |
+| P158 | pipeline·文本分类 | `迁移学习/dm01_pipeline.py`（`test_sentiment_classification`） |
+| P159 | pipeline·特征提取 | `dm01_pipeline.py`（`test_feature_extraction`，`(1, 8, 768)`） |
+| P160 | pipeline·完形填空 | `dm01_pipeline.py`（`test_fill_mask`；★ 见踩坑 18） |
+| P161 | pipeline·阅读理解 | `dm01_pipeline.py`（`test_question_answering`；★ 见踩坑 19） |
+| P162 | pipeline·文本摘要 | `dm01_pipeline.py`（`test_summeration`，`distilbart-cnn-12-6`） |
+| P163 | pipeline·NER | `dm01_pipeline.py`（`test_ner`） |
+| P164 | 自动模型·文本分类 | `迁移学习/dm02_auto_model.py`（`AutoModelForSequenceClassification` + `id2label`） |
+| P165 | 自动模型·特征提取 | `dm02_auto_model.py`（`AutoModel` → `last_hidden_state`） |
+| P166 | 自动模型·完形填空 | `dm02_auto_model.py`（`AutoModelForMaskedLM`，logits `(1, 8, 21128)`） |
+| P167 | 自动模型·阅读理解 | `dm02_auto_model.py`（`start_logits` / `end_logits` 双指针） |
+| P168 | 自动模型·文本摘要 | `dm02_auto_model.py`（`AutoModelForSeq2SeqLM.generate()`） |
+| P169 | 自动模型·NER | `dm02_auto_model.py`（`AutoModelForTokenClassification`；★ 见踩坑 21） |
+| P170 | 具体模型·完形填空 | 🟡 `迁移学习/dm03_special_model.py` **只写完情感分析**，`BertForMaskedLM` 已 import 未使用 |
+| P171 | 中文分类·数据加载 | 未开始 |
+| P172 | 中文分类·数据预处理 | 未开始 |
 
 ## 运行方式
 
@@ -2130,6 +2290,65 @@ if mask is not None and mask.dim() == 3:
 ```
 
 **顺带记住 `src_mask` 唯一通用的形状是 `(B, 1, L_src)`** —— 它要同时喂编码器自注意力 `(B,h,L_src,L_src)` 和交叉注意力 `(B,h,L_tgt,L_src)`，只有这一种能两边广播通过。
+
+### 18. `chinese-bert-wwm` 没有 MLM 头，`fill-mask` 会吐出**繁体乱码**（`迁移学习/dm01_pipeline.py` 踩到）
+
+`pipeline(task="fill-mask", model=...)` 只要求"形状对得上"，**不检查权重是不是训练过的**。
+
+| 模型 | 实际类 | 有 MLM 头？ | `fill-mask` 结果 |
+| --- | --- | --- | --- |
+| `bert-base-chinese` | `BertForMaskedLM` | ✅ 有 | 正常填空 |
+| `chinese-bert-wwm` | `BertModel`（只有编码器） | ❌ **头是随机初始化的** | **繁体乱码 / 无意义词** |
+
+`pipeline` 拿到一个只有编码器的模型时，会用随机初始化的 MLM 头去解 logits —— **不报错、不警告**，只是结果荒唐。
+
+**记住：`pipeline` 的 `model` 参数要传"已经带该任务头的模型目录"**，而不是"同名的底座模型"。
+判断方法：看目录里 `config.json` 的 `architectures` 字段（`BertForMaskedLM` vs `BertModel`）。
+
+### 19. 问答任务的 `context` 必须是"一段材料"，给口语短句 score 会≈0（`dm01_pipeline.py` 踩到）
+
+模型是在 **MRC（机器阅读理解）** 数据上微调的，`[CLS]` 那一维专门学成"**这段里抽不出答案**"。
+
+同一个模型、同一个问题，换个 context：
+
+| context | 答案 | score |
+| --- | --- | --- |
+| 「吴昊，1995年出生于浙江杭州，2018年毕业于浙江大学……」 | 「浙江大学」 | **≈0.9999** |
+| 「我是wuhao，我爱学习大模型，我喜欢游戏。」 | 蒙对一个词 | **≈0.000000** |
+
+**答案虽然"看对了"，但 score 才是模型的真实态度。** 用 MRC 模型做问答时，喂的必须是**陈述性长文本**，不是对话。
+
+### 20. 预训练模型目录**数 GB**，不写进 `.gitignore` 会直接把仓库撑爆（`迁移学习/model/` 踩到）
+
+`迁移学习/model/` 下 8 个 HuggingFace 模型（`chinese_pretrain_mrc_roberta_wwm_ext_large`、
+`distilbart-cnn-12-6`、`bert-base-chinese`、`chinese-bert-wwm`、`roberta-base-finetuned-cluener2020-chinese`、
+`chinese_sentiment` 等），**单个几百 MB 到 1 GB+，合计数 GB**。
+
+它们和 `英译法/model/*.pth`、`文本张量表示/model/*.bin` 是同一类东西：**可重新下载的训练/推理产物**，
+不该进版本库（GitHub 单文件还有 100 MB 硬限制，见踩坑记录第 2 条）。
+
+→ 已加进 [`.gitignore`](.gitignore)：`迁移学习/model/`
+
+### 21. NER（token 分类）里 `i` 是 **token 下标**，不是字符下标（`dm02_auto_model.py` 踩到）
+
+```python
+tokens = Mytokenizer.convert_ids_to_tokens(input["input_ids"][0].tolist())
+
+# ✗ 错：把 token 下标当成字符下标
+print(text[i], config.id2label[score])
+
+# ✓ 对：用 tokens[i]，并且跳过特殊 token
+SKIP = {"[CLS]", "[SEP]", "[PAD]"}
+if tokens[i] in SKIP:   # ★ 是 in，不是 ==
+    continue
+print(f"第{i}个token：{tokens[i]} -> {config.id2label[score]}")
+```
+
+三个容易踩的点：
+
+1. **`tokens` 长度 ≠ `text` 长度**——中间夹着 `[CLS]` / `[SEP]`，英文和数字还可能被切成多个 token
+2. **`SKIP` 用 `in` 判断集合**，写成 `if tokens[i] == SKIP` 永远是 False
+3. **下标错位不报错**——`assert len(tokens) == outputs.shape[0]` 只保证 token 数和 logits 行数一致，**保证不了和原始字符串对齐**
 
 ## 说明
 

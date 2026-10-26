@@ -32,7 +32,7 @@ def test_fill_mask():
     # ★ 必须用"带 MLM 头"的模型：
     #   bert-base-chinese 是 BertForMaskedLM（有 mlm 头）-> 能正常填空
     #   chinese-bert-wwm  是 BertModel（只有编码器，无 mlm 头）-> 头是随机的，输出繁体乱码
-    fill_mask = pipeline(task = "fill-mask", model = "./model/bert-base-chinese")
+    fill_mask = pipeline(task = "fill-mask", model = "./model/chinese-bert-wwm")
     result = fill_mask("你好[MASK]心啊！！") # top_k表示返回前几个最可能的结果
     print(result)
 
