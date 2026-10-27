@@ -93,6 +93,12 @@
     - [3. ★ 三类输出头，三种解码方式](#3--三类输出头三种解码方式)
     - [4. 推理三件套（每个任务都要写）](#4-推理三件套每个任务都要写)
     - [5. 模型目录里的文件各是什么](#5-模型目录里的文件各是什么)
+  - [Day12 迁移学习实战：中文分类案例（P173–P189）](#day12-迁移学习实战中文分类案例p173p189)
+    - [1. 冻结 BERT、只训分类头：三件事缺一不可](#1-冻结-bert只训分类头三件事缺一不可)
+    - [2. requires_grad / eval() / no_grad 三个别混](#2-requires_grad--eval--no_grad-三个别混)
+    - [3. CrossEntropyLoss 吃的是 logits](#3-crossentropyloss-吃的是-logits)
+    - [4. 统计量的分子分母必须同一口径（最容易看错训练状态）](#4-统计量的分子分母必须同一口径最容易看错训练状态)
+    - [5. 保存：存整个模型还是只存头](#5-保存存整个模型还是只存头)
 - [环境](#环境)
   - [依赖现状（2026 年排查，基于 nlpbase）](#依赖现状2026-年排查基于-nlpbase)
     - [GPU 版 PyTorch（✅ 2026-10-10 已装好，命令留档备查）](#gpu-版-pytorch-2026-10-10-已装好命令留档备查)
@@ -122,6 +128,8 @@
   - [20. 预训练模型目录数 GB，不写进 .gitignore 会直接把仓库撑爆](#20-预训练模型目录数-gb不写进-gitignore-会直接把仓库撑爆迁移学习model-踩到)
   - [21. NER（token 分类）里 i 是 token 下标，不是字符下标](#21-ner-token-分类里-i-是-token-下标不是字符下标dm02_auto_modelpy-踩到)
   - [22. encode_plus 传 list 会被静默当成句对，tokenizer() 不会](#22-encode_plus-传-list-会被静默当成句对tokenizer-不会迁移学习dm02_auto_modelpy-踩到)
+  - [23. 冻结 BERT 有三件事，少一件都会出问题](#23-冻结-bert-有三件事少一件都会出问题迁移学习dm04_中文分类案例py-踩到)
+  - [24. 统计量的分子分母必须同一口径，否则看不出训练状态](#24-统计量的分子分母必须同一口径否则看不出训练状态dm04_中文分类案例py-踩到)
 - [说明](#说明)
 - [参考](#参考)
 
@@ -143,8 +151,8 @@
 | Day08 | Transformer 逐层实现（上） | P110–P125 | ✅ **已完成**（`transformer架构/dm01`、`dm02`：词嵌入 / 位置编码 / 三角矩阵 / 掩码 / 注意力 / 多头 / FFN） |
 | Day09 | Transformer 逐层实现（下） | P126–P143 | ✅ **已完成**（`dm02`~`dm09`：LayerNorm / 子层 / 编码器 / 解码器 / 输出 / 整体；完整模型 **45,677,544 参数 / 174.25 MB**，通过因果性·位置编码·padding·梯度四项行为测试） |
 | Day10 | Fasttext 优化 + 预训练模型 + Transformers 库 | P144–P160 | ✅ **已完成**（`Fasttest/01_直接训练.py` 七步调优到 **61.56%**；`迁移学习/dm01_pipeline.py` 跑通 pipeline 六种任务） |
-| Day11 | Transformers 实战：pipeline / AutoModel / 具体模型 | P161–P172 | 🟡 **进行中**（P161–P170 已完成：`dm01_pipeline.py` 六种 pipeline 任务、`dm02_auto_model.py` 六种 AutoModel 任务、`dm03_special_model.py` 具体模型语言；P171–P172 未开始） |
-| Day12 | 迁移学习：BERT / ELMo / GPT | P173–P189 | ⬜ 未开始 |
+| Day11 | Transformers 实战：pipeline / AutoModel / 具体模型 | P161–P172 | ✅ **已完成**（`dm01_pipeline.py` 六种 pipeline 任务、`dm02_auto_model.py` 六种 AutoModel 任务、`dm03_special_model.py` 具体模型；`dm04_中文分类案例.py` 的数据加载与预处理） |
+| Day12 | 迁移学习：中文分类 / 中文填空 / NSP + BERT 系列 | P173–P189 | 🟡 **进行中**（P173–P175 中文分类案例已跑通：**冻结 BERT 只训分类头**，可训练参数 1,538 / 总 102,269,186，**测试集 89.08% / 验证集 88.00%**；P176 起进入中文填空与 NSP） |
 
 ## 知识点笔记
 
@@ -1503,6 +1511,93 @@ with torch.no_grad():          # ★ 不建计算图，省显存、快
 
 **换模型只需要换目录**——这也是 `AutoModel.from_pretrained("./model/xxx")` 的意义。
 
+### Day12 迁移学习实战：中文分类案例（P173–P189）
+
+代码：[`迁移学习/dm04_中文分类案例.py`](迁移学习/dm04_中文分类案例.py)｜数据：`迁移学习/data/{train,test,validation}.csv`（9600 / 1200 / 1200，`label` + `text`，二分类）
+
+#### 1. 冻结 BERT、只训分类头：三件事缺一不可
+
+```python
+class AiModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.bert = BertModel.from_pretrained('./model/bert-base-chinese')   # ① 赋值给 self.
+        for p in self.bert.parameters():
+            p.requires_grad = False                                          # ② 冻结
+        self.fc = nn.Linear(768, 2)
+
+    def train(self, mode=True):                                              # ③ 覆盖 train()
+        super().train(mode)
+        self.bert.eval()                                                     #    BERT 永远 eval
+        return self
+
+    def forward(self, input):
+        with torch.no_grad():
+            pooled = self.bert(**input).pooler_output
+        return self.fc(pooled)                                               # 在 with 外面
+```
+
+**实测收益（batch=16, max_length=128）：**
+
+| | 可训练参数 | 速度 | 峰值显存 |
+| --- | --- | --- | --- |
+| 全量微调 | **102,269,186** | 145.7 ms/批 | 2.43 GB |
+| **冻结 BERT** | **1,538** | **28.3 ms/批** | **0.51 GB** |
+
+> **★ ① 最容易漏：只写 `MyModel = ...` 然后 `forward` 里引用全局变量 → `parameters()` 里根本没有 BERT（PyTorch 只登记 `self.xxx`）。**
+
+#### 2. `requires_grad` / `eval()` / `no_grad` 三个别混
+
+| 手段 | 管什么 | 实测 |
+| --- | --- | --- |
+| `p.requires_grad = False` | **永不更新**（任何代码路径） | BERT 变化 **0** 个参数 |
+| `self.bert.eval()` | 关 dropout（结果可复现） | 覆盖后两次前向差 **0.000000**；不覆盖则 **1.689024** |
+| `with torch.no_grad()` | 不建图 → 省显存 | 冻结时**省不到**（1225 MB vs 1225 MB），不冻结时才省（1593 → 1225 MB） |
+
+**关键实测：参数全冻结时 `grad_fn` 就是 `None`** —— autograd 发现没有任何张量需要梯度，**自动不建图**，`no_grad` 变成纯冗余（但留着无害，算双保险）。
+
+**反过来：`fc` **不能**放进 `no_grad`** —— 否则 `loss.backward()` 直接抛
+`element 0 of tensors does not require grad`，绕过它 `step()` 也只会空转（`p.grad is None`，权重变化量 `0.0000000000`）。
+
+#### 3. `CrossEntropyLoss` 吃的是 **logits**
+
+```python
+loss = nn.CrossEntropyLoss()(output, label)   # output (B, C) 原始分数, label (B,) long
+```
+
+| 传什么 | 结果 |
+| --- | --- |
+| **原始 logits** | ✓ `loss = 0.33786535` = `F.nll_loss(F.log_softmax(logits), target)`（完全相等） |
+| 先 `argmax` | ✗ `RuntimeError: Expected floating point type for target with class probabilities` —— 而且 argmax 不可导 |
+| 先 `softmax` | ⚠️ 能跑但**目标算错了**：`loss = 0.499937`（应该 0.337865，差 48%） |
+
+**`argmax` 只在评估时用：** `pred = output.argmax(dim=-1)` → `(pred == label).sum()`。
+
+#### 4. 统计量的分子分母必须同一口径（最容易看错训练状态）
+
+| 统计量 | 分子累加的是 | 分母该用 | 用错的后果 |
+| --- | --- | --- | --- |
+| **loss** | `loss.item()` = **每批平均** | **批数**（`len(dataloader)`） | 除以 9600 样本 → 打印 **0.0219**（真实 0.7），看起来"收敛极好" |
+| **accuracy** | `(pred == label).sum()` = **样本数** | **样本数** | 累加每批准确率再除以样本数 → **1.4%**（真实 89%） |
+
+**还有一个陷阱：`drop_last=True` 时用 `len(dataset)` 做分母会低估** —— 实测 1200 条、batch=64，丢掉最后 48 条后：`correct/len(dataset) = 0.8517`，而真实是 `0.8872`（**差 3.92 个百分点**）。
+
+> **★ 最稳的写法：分子分母都用"实际遍历到的"。**
+> ```python
+> correct += (pred == label).sum().item()
+> total   += label.numel()          # 不要用 len(dataset)
+> acc = correct / total
+> ```
+
+#### 5. 保存：存整个模型还是只存头
+
+| 存什么 | 体积 | 10 轮共占 |
+| --- | --- | --- |
+| `model.state_dict()` | **390.2 MB**（含整个 BERT） | **3.8 GB** |
+| `model.fc.state_dict()` | **6.0 KB**（1538 个参数） | 60 KB |
+
+**冻结场景下 BERT 权重每轮完全一样，存 10 份纯浪费** —— 只存分类头，加载时 `model.fc.load_state_dict(...)`。
+
 ## 环境
 
 | 项 | 版本 / 说明 |
@@ -1632,12 +1727,15 @@ nlp/
 │   │                                           wordNgrams+loss / autotune / 多标签(ova) / 保存加载
 │   ├── data/                                  cooking 菜谱语料 **500 类**（11 个文件 7.3 MB，已 gitignore）
 │   └── model/                                 model.bin（**766.8 MB**，已 gitignore）
-├── 迁移学习/                    Day10–Day11 P157–P172 预训练模型 + Transformers 三种用法
+├── 迁移学习/                    Day10–Day12 P157–P175 预训练模型 + Transformers 三种用法 + 中文分类案例
 │   ├── dm01_pipeline.py                        **pipeline 方式**六种任务（P158–P163）：
 │   │                                           文本分类 / 特征提取 / 完形填空 / 阅读理解 / 摘要 / NER
 │   ├── dm02_auto_model.py                      **AutoModel 方式**六种任务（P164–P169）+ 逐 token NER 解码
 │   ├── dm03_special_model.py                   **具体模型方式**（P170）：BertForSequenceClassification 等
-│   └── model/                                 6 个 HuggingFace 模型，合计约 **3.9 GB**（已 gitignore）
+│   ├── dm04_中文分类案例.py                     **中文分类全流程**（P171–P175）：file2dataset / collate_fn1 /
+│   │                                           AiModel（冻结 BERT 只训分类头）/ train / evaluate（测试集 89.08%）
+│   ├── data/                                   train 9600 / test 1200 / validation 1200 条 csv（已 gitignore）
+│   └── model/                                  6 个 HuggingFace 模型约 **3.9 GB** + 训练产物（已 gitignore）
 ├── runs/                      TensorBoard 事件文件（生成物，已 gitignore）
 ├── __pycache__/               Python 字节码缓存（生成物，已 gitignore）
 ├── .gitignore                 挡大文件 + runs/ + __pycache__
@@ -1812,8 +1910,11 @@ nlp/
 | P168 | 自动模型·文本摘要 | `dm02_auto_model.py`（`AutoModelForSeq2SeqLM.generate()`） |
 | P169 | 自动模型·NER | `dm02_auto_model.py`（`AutoModelForTokenClassification`；★ 见踩坑 21） |
 | P170 | 具体模型·完形填空 | `迁移学习/dm03_special_model.py`（`BertForSequenceClassification` 情感分析；`BertForMaskedLM` 已 import，写法同 `dm02` 的 `test_fill_mask`；★ 见踩坑 22 的 `decode` 空格） |
-| P171 | 中文分类·数据加载 | 未开始 |
-| P172 | 中文分类·数据预处理 | 未开始 |
+| P171 | 中文分类·数据加载 | `迁移学习/dm04_中文分类案例.py`（`file2dataset`，`load_dataset('csv', data_files={train,test,validation})` → 9600/1200/1200） |
+| P172 | 中文分类·数据预处理 | `dm04_中文分类案例.py`（`collate_fn1` 批内动态 padding + `LongTensor(label)`；★ 见踩坑 24 的 `max_length`） |
+| P173 | 中文分类·模型搭建 | `dm04_中文分类案例.py`（`AiModel`：`BertModel` + `Linear(768,2)`；★ 冻结 BERT + 覆盖 `train()`，见踩坑 23） |
+| P174 | 中文分类·模型训练 | `dm04_中文分类案例.py`（`train(epochs=10)`，AdamW lr=1e-3 + `CrossEntropyLoss` 直接吃 logits） |
+| P175 | 中文分类·模型评估 | `dm04_中文分类案例.py`（`evaluate()`，running accuracy `correct/total` → 测试集 89.08% / 验证集 88.00%） |
 
 ## 运行方式
 
@@ -2410,6 +2511,95 @@ tok.encode_plus(["我讨厌你！！"])        # 1 个元素
 
 - **中文 `decode` 会带空格**：`decode(ids, skip_special_tokens=True)` 出来是 `我 爱 你 ， 中 国 ！`（WordPiece 解码器固定插空格），要 `.replace(" ", "")` 才是 `我爱你，中国！`。慢分词器 / 快分词器都一样，`convert_tokens_to_string` 也一样。
 - **`convert_ids_to_tokens` 和 `decode` 不是"两步"**：前者是**调试**（看 id 被切成哪几个 token，`decode` 给不了），后者是**输出**（可直接用，不需要前置步骤）。也**不要手工 `"".join(tokens)`**——英文 BPE 的 token 带 `Ġ` 前缀（`ĠHubble`），拼起来是 `The ĠHubble Ġtelescope`。
+
+### 23. 冻结 BERT 有三件事，少一件都会出问题（`迁移学习/dm04_中文分类案例.py` 踩到）
+
+```python
+class AiModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.bert = BertModel.from_pretrained('./model/bert-base-chinese')  # ①
+        for p in self.bert.parameters():
+            p.requires_grad = False                                        # ②
+        self.fc = nn.Linear(768, 2)
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.bert.eval()                                                   # ③
+        return self
+```
+
+**① 漏了 `self.` → BERT 根本不在 `parameters()` 里**
+
+```python
+MyModel = BertModel.from_pretrained(...)      # 模块级全局
+class AiModel(nn.Module):
+    def forward(self, x):
+        output = MyModel(**x)                 # ✗ PyTorch 看不到它
+```
+
+```
+AiModel 参数量合计: 1,538          ← 只有 fc
+BERT 参数量合计  : 102,267,648     ← 完全不在
+m.state_dict() 的键: ['fc.weight', 'fc.bias']
+optimizer 实际管着 1,538 个参数    ← 你以为在微调，其实 BERT 一个权重都不会变
+m.to('cuda') 后: fc 在 cuda:0，BERT 还在 cpu  → forward 直接 RuntimeError
+```
+
+**② 漏了 `requires_grad = False` → 变成全量微调**（实测 BERT 199 个参数全变）
+
+**③ 漏了覆盖 `train()` → dropout 还在（这个最隐蔽）**
+
+```
+不覆盖: .train() 后 bert.training=True   →  同一句话两次 forward 差异 1.689024
+覆盖后: .train() 后 bert.training=False  →  同一句话两次 forward 差异 0.000000
+```
+
+**顺带记住 `no_grad` 的真实边界（实测）：**
+
+| 组合 | BERT 会变吗 | 显存 |
+| --- | --- | --- |
+| 冻结 + 加 `no_grad` | 不会 | 1225 MB |
+| **冻结 + 不加 `no_grad`** | **不会**（`grad_fn=None`，autograd 自动不建图） | **1225 MB** |
+| 不冻结 + 加 `no_grad` | 不会 | 1225 MB |
+| 不冻结 + 不加 `no_grad` | **会（199 个参数）** | 1593 MB |
+
+> **★ 参数全冻结时 `no_grad` 省不到显存 —— 但加了也无害，算双保险。**
+> **★ `fc` **绝对不能**放进 `no_grad`：`loss.backward()` 会抛 `element 0 of tensors does not require grad`；绕过它 `step()` 也是空转（`p.grad is None`，权重变化量 `0.0000000000`）。**
+
+### 24. 统计量的"分子分母"必须同一口径，否则看不出训练状态（`dm04_中文分类案例.py` 踩到）
+
+**分母错一次，打印出来的数字会骗你。**
+
+| 统计量 | 分子累加的是 | 正确分母 | 写错的后果（实测） |
+| --- | --- | --- | --- |
+| **loss** | `loss.item()` = **每批平均** | **批数** `len(dataloader)` | 除以 `len(train_dataset)`=9600 → 打印 **0.0219**（真实 **0.7**），看起来"已经收敛到极好" |
+| **accuracy** | `(pred == label).sum()` = **样本数** | **样本数** | 累加每批准确率再除以样本数 → **1.4%**（真实 **89%**） |
+
+**两种正确口径（选一个，别混）：**
+
+```python
+# 口径 A：按批等权（最常用）
+total_loss += loss.item()
+avg_loss = total_loss / len(dataloader)
+
+# 口径 B：按样本加权（最后一批不满时更准）
+total_loss += loss.item() * label.size(0)
+avg_loss = total_loss / len(train_dataset)
+```
+
+**还有 `drop_last` 这个坑：**
+
+```
+测试集 1200 条，batch=64，drop_last=True
+实际遍历 1152 条（丢最后 48），对 1022
+  correct / len(dataset)  = 0.8517   ← ★ 低估
+  correct / 实际遍历样本   = 0.8872   ← 真实
+差 3.92 个百分点
+```
+
+> **★ 口诀：`loss.item()` 是**均值**（单位=批）；`(pred==label).sum()` 是**计数**（单位=样本）。分子什么单位，分母就什么单位。**
+> **★ 最稳：分子分母都来自循环内部（`total += label.numel()`），不碰 `len(dataset)`。**
 
 ## 说明
 
