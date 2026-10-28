@@ -106,6 +106,10 @@
     - [4. 一个 BERT，四种下游接法](#4-一个-bert四种下游接法)
     - [5. ★ MLM：15% 里的 811](#5--mlm15-里的-811)
     - [6. NSP：判断 B 是不是 A 的下一句](#6-nsp判断-b-是不是-a-的下一句)
+  - [Day12 补充：ELMo 与 GPT 总结（P188–P189）](#day12-补充elmo-与-gpt-总结p188p189)
+    - [1. ELMo：第一个提出「动态词向量」的模型](#1-elmo第一个提出动态词向量的模型)
+    - [2. GPT：单向 Decoder，主生成](#2-gpt单向-decoder主生成)
+    - [3. ★ 三家优缺点总表（这就是课程最后那道"面试题"）](#3--三家优缺点总表这就是课程最后那道面试题)
 - [环境](#环境)
   - [依赖现状（2026 年排查，基于 nlpbase）](#依赖现状2026-年排查基于-nlpbase)
     - [GPU 版 PyTorch（✅ 2026-10-10 已装好，命令留档备查）](#gpu-版-pytorch-2026-10-10-已装好命令留档备查)
@@ -159,7 +163,7 @@
 | Day09 | Transformer 逐层实现（下） | P126–P143 | ✅ **已完成**（`dm02`~`dm09`：LayerNorm / 子层 / 编码器 / 解码器 / 输出 / 整体；完整模型 **45,677,544 参数 / 174.25 MB**，通过因果性·位置编码·padding·梯度四项行为测试） |
 | Day10 | Fasttext 优化 + 预训练模型 + Transformers 库 | P144–P160 | ✅ **已完成**（`Fasttest/01_直接训练.py` 七步调优到 **61.56%**；`迁移学习/dm01_pipeline.py` 跑通 pipeline 六种任务） |
 | Day11 | Transformers 实战：pipeline / AutoModel / 具体模型 | P161–P172 | ✅ **已完成**（`dm01_pipeline.py` 六种 pipeline 任务、`dm02_auto_model.py` 六种 AutoModel 任务、`dm03_special_model.py` 具体模型；`dm04_中文分类案例.py` 的数据加载与预处理） |
-| Day12 | 迁移学习：中文分类 / 中文填空 / NSP + BERT 系列 | P173–P189 | 🟡 **进行中**（P173–P175 中文分类案例已跑通：**冻结 BERT 只训分类头**，可训练参数 1,538 / 总 102,269,186，**测试集 89.08% / 验证集 88.00%**；P176 起进入中文填空与 NSP） |
+| Day12 | 迁移学习：中文分类 / 中文填空 / NSP + BERT 系列 | P173–P189 | ✅ **视频全部看完**（中文分类 P173–P175 已跑通：冻结 BERT 只训分类头，**测试集 89.08% / 验证集 88.00%**；中文填空 P176–P179 已跑通：最简 MLM 头 `Linear(768, 21128)`；**NSP 案例 P180–P183 代码未写**；BERT / ELMo / GPT 理论 P184–P189 已在笔记里总结） |
 
 ## 知识点笔记
 
@@ -1735,6 +1739,96 @@ loss = nn.CrossEntropyLoss()(output, label)   # output (B, C) 原始分数, labe
 > **★ 与 MLM 的分工：MLM 让模型理解「**单个词的上下文语义**」（深度、双向）；NSP 让模型理解「**句子之间的关系**」。**
 > **★ 对应到代码：NSP 用的就是 `token_type_ids`（`E_A` / `E_B` 那套 Segment Embeddings）—— 这也是为什么 `tokenizer(A, B)` 会把 `token_type_ids` 后半段全设成 `1`（见踩坑 22）。**
 
+### Day12 补充：ELMo 与 GPT 总结（P188–P189）
+
+> P188 ELMo 介绍 / P189 GPT 简介与架构，**纯理论**。
+
+#### 1. ELMo：第一个提出「动态词向量」的模型
+
+**ELMo 的历史地位：它是**第一个提出「动态词向量」**的模型。**
+
+| | 静态词向量（Word2Vec / GloVe） | **动态词向量（ELMo）** |
+| --- | --- | --- |
+| 一个词有几个向量 | **1 个**（"苹果"永远是同一个） | **按上下文变**（"吃苹果" / "苹果手机" 不同） |
+| 多义词 | ❌ 无法区分 | ✅ **解决多义词问题** |
+
+**ELMo 的做法：两层 LSTM，左→右和右→左各跑一遍，再把两边的结果**拼接**起来。**
+
+**ELMo 的两个缺点（课程原话）：**
+
+1. **用 LSTM 提取特征的能力弱于 Transformer**
+2. **用向量拼接的方式融合上下文特征的能力弱于 Transformer**
+
+> **★ 注意关键词是"**拼接**"（concatenate）—— 而 BERT 是在**每一层内部**就让左右信息相互融合，这是本质差别。**
+
+#### 2. GPT：单向 Decoder，主生成
+
+**GPT 是什么：**
+
+- **OpenAI** 提出的一种**语言预训练模型**
+- 论文 ①：*Improving Language Understanding by Generative Pre-Training* → **GPT**
+- 论文 ②：*Language Models are Unsupervised Multitask Learners* → **GPT2**
+- **GPT 和 GPT2 结构差别不大**，但 GPT2 用了**更大的数据集**训练
+- **GPT（2018 年上半年）早于 BERT（2018 年下半年）提出**
+
+**GPT 和 BERT 最大的区别 —— 预训练方式：**
+
+| | **GPT** | **BERT** |
+| --- | --- | --- |
+| 预测 `u_i` 时看什么 | **只看上文** `[u1 … u(i-1)]` | **同时看上下文** `[u1 … u(i-1), u(i+1) … un]` |
+| 方法 | **传统语言模型**（用上文预测下一个词） | **双向上下文**共同预测被遮的词 |
+| 结果 | 擅长 **NLG**（自然语言**生成**） | 擅长 **NLU**（自然语言**理解**） |
+
+**GPT 用的是 Transformer 的 **Decoder**，但改了三处（课程原话）：**
+
+| 改动 | 说明 |
+| --- | --- |
+| **① 去掉中间第二层** | 也就是**去掉常规注意力机制层**（Encoder–Decoder 之间的 **cross-attention**） |
+| **② 6 个 block → 12 个 block** | 层数从 6 加到 12（和 BERT-base 的 12 层一致） |
+| **③ 用 mask 机制** | **look-ahead mask**（因果掩码），保证每个位置只能看到左边 |
+
+> **★ 这三条你其实都写过：**
+> - **①** 就是 `transformer架构/dm06_decoder_layer.py` 里那层**交叉注意力** —— GPT 不要它（因为没有编码器输出可对齐）
+> - **②** 就是 `N=6` 改成 `N=12`
+> - **③** 就是你验证过的**因果掩码**（Day09 实测：正确掩码下改末词对位置 0 影响 `0.000000`，全 1 掩码是 `0.111` → 偷看未来）
+>
+> **★ 所以 GPT 的 decoder block = 你那个 DecoderLayer **删掉交叉注意力子层**，其余不变。**
+
+**GPT 里数据怎么流（课程"栗子"）：**
+
+1. 数据经过 **12 个 GPT decoder 模块**
+2. **每个 decoder 模块各自维护自己**的 self-attention 层和 Feed Forward 层的权重（不共享）
+3. 每层里：每个单词求对其他单词的注意力权重 `softmax(Q·Kᵀ)`，再乘 `V` 得到注意力结果
+4. 主要完成**数据张量化**（文本 → 数值化 → 张量化）
+5. 预测值的张量 = 注意力结果的**加权求和**
+
+> **★ 第 4、5 条正是你 Day05–Day06 手算过的注意力四步，一模一样。**
+
+#### 3. ★ 三家优缺点总表（这就是课程最后那道"面试题"）
+
+| 模型 | 一句话定位 | 优点 | 缺点 |
+| --- | --- | --- | --- |
+| **ELMo** | **第一个动态词向量** | 根据上下文**动态调整 word embedding**，能解决**多义词**问题 | **LSTM 提取特征弱于 Transformer**；**向量拼接**融合上下文的能力**弱于 Transformer** |
+| **GPT** | **主生成**（NLG） | 用 **Transformer 提取特征**，能力大幅提升；**适合文本生成** | 只用了**单向 Decoder**，**无法融合未来（右边）的信息** |
+| **BERT** | **主理解**（NLU） | 用**双向 Transformer** 提取特征；加了 **MLM + NSP 两个预训练任务**做多任务预训练；擅长文本理解 / 语义理解 | **模型过于庞大、参数量太多**，数据和算力要求过高，训练好的模型应用场景要求高；**更适合语言嵌入表达和语言理解，不适合生成式任务** |
+
+**课程图 3 的英文原注（顺带记一下）：**
+
+> BERT uses a **bidirectional** Transformer. OpenAI GPT uses a **left-to-right** Transformer. ELMo uses the **concatenation of independently trained left-to-right and right-to-left LSTMs**.
+> Among the three, **only BERT representations are jointly conditioned on both left and right context in all layers**.
+> In addition, **BERT and OpenAI GPT are fine-tuning approaches, while ELMo is a feature-based approach**.
+
+**★ 最后一句很关键，区分了两种范式：**
+
+| 范式 | 代表 | 怎么用预训练模型 |
+| --- | --- | --- |
+| **fine-tuning**（微调） | BERT、GPT | 模型**整体参与训练**，只换最后一层 |
+| **feature-based**（特征提取） | ELMo | 预训练模型**冻结**，只把它的输出当**特征**喂给下游模型 |
+
+> **★ 这正好解释了你 Day12 做的两种训练：**
+> - **`dm04` 冻结 BERT 只训分类头** —— 严格说是 **feature-based**（虽然是在 BERT 上做的，不是 ELMo）
+> - **如果解冻 BERT 一起训** —— 那才是 **fine-tuning**
+
 ## 环境
 
 | 项 | 版本 / 说明 |
@@ -2052,6 +2146,17 @@ nlp/
 | P173 | 中文分类·模型搭建 | `dm04_中文分类案例.py`（`AiModel`：`BertModel` + `Linear(768,2)`；★ 冻结 BERT + 覆盖 `train()`，见踩坑 23） |
 | P174 | 中文分类·模型训练 | `dm04_中文分类案例.py`（`train(epochs=10)`，AdamW lr=1e-3 + `CrossEntropyLoss` 直接吃 logits） |
 | P175 | 中文分类·模型评估 | `dm04_中文分类案例.py`（`evaluate()`，running accuracy `correct/total` → 测试集 89.08% / 验证集 88.00%） |
+| P176 | 中文填空·数据预处理 | `dm05_完型填空.py`（`collate_fn1`：`[MASK]` 替换 + `labels.clone()`；★ 不 clone 会假 100%） |
+| P177 | 中文填空·模型搭建 | `dm05_完型填空.py`（`AiModel`：`BertModel` + `Linear(768, 21128)` 最简 MLM 头，取 `last_hidden_state[:, rand]`） |
+| P178 | 中文填空·模型训练 | `dm05_完型填空.py`（`train()`，`CrossEntropyLoss()(logits, labels)`，labels 是 `(B,)` 不用 `-100`） |
+| P179 | 中文填空·模型评估 | `dm05_完型填空.py`（`evaluate()`，`argmax` 后 `correct/total`；★ 打印要看 `[MASK]` 得关 `skip_special_tokens`） |
+| P180–P183 | NSP 案例（数据集对象 / 预处理 / 模型 / 训练评估） | 🟡 视频已看完，**代码未写**（原理见「Day12 补充」第 6 节） |
+| P184 | BERT 模型介绍 | 纯理论（时间线，见「Day12 补充：BERT 模型与预训练任务」第 1 节） |
+| P185 | BERT 模型架构介绍 | 纯理论（三家对比 + 输入三合一 + 四种下游接法，第 2–4 节） |
+| P186 | BERT 预训练任务 MLM 和 NSP | 纯理论（★ 15% 里的 **811**，第 5–6 节） |
+| P187 | BERT 模型总结 | 纯理论（MLM 管词级语义、NSP 管句间关系） |
+| P188 | ELMo 模型介绍 | 纯理论（第一个动态词向量，见「ELMo 与 GPT 总结」第 1 节） |
+| P189 | GPT 模型介绍 | 纯理论（单向 Decoder、主生成；Decoder 改三处，第 2–3 节） |
 
 ## 运行方式
 
