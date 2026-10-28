@@ -49,19 +49,19 @@ class AiModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.bert = BertModel.from_pretrained('./model/bert-base-chinese')
-        self.fc = nn.Linear(768, 2)  # 有两个类别
+        self.fc = nn.Linear(768, 2)  
 
         for p in self.bert.parameters():
             p.requires_grad = False  # 冻结BERT参数
     def train(self, mode=True):
         super().train(mode)
-        self.bert.eval()                       # 冻结了就一直 eval
+        self.bert.eval()                       
         return self
     def forward(self, input):
         with torch.no_grad():  # 不建计算图，省显存（参数已靠 requires_grad=False 冻结）
             output = self.bert(**input)
-            pooled_output = output.pooler_output  # 获取池化输出
-        logits = self.fc(pooled_output)  # 全连接层输出
+            pooled_output = output.pooler_output  
+        logits = self.fc(pooled_output)  
         return logits
 
 def test():
